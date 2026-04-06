@@ -1,11 +1,15 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { authedFetch, authedUrl } from '../lib/supabase';
+import * as tus from 'tus-js-client';
 
 const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp'];
 const VIDEO_EXTENSIONS = ['mp4', 'mov', 'avi', 'mkv', 'webm'];
+const AUDIO_EXTENSIONS = ['mp3', 'wav', 'flac', 'aac', 'ogg', 'm4a'];
+const THUMB_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'mp4', 'mov', 'avi', 'mkv', 'webm'];
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:4000';
 const WEB_URL = process.env.REACT_APP_WEB_URL || window.location.origin;
+const TUS_THRESHOLD = 5 * 1024 * 1024; // 5MB
 
 function formatBytes(bytes) {
   if (!bytes || bytes === 0) return '0 B';
@@ -29,6 +33,37 @@ function getFileIcon(extension) {
   if (['pdf', 'doc', 'docx', 'txt', 'md'].includes(ext)) return 'doc';
   if (['zip', 'rar', '7z', 'tar', 'gz'].includes(ext)) return 'archive';
   return 'file';
+}
+
+function hasThumbnail(item) {
+  return item.type === 'file' && THUMB_EXTENSIONS.includes((item.extension || '').toLowerCase());
+}
+
+// ─── Thumbnail component ───
+function Thumbnail({ filePath, size = 80 }) {
+  const [url, setUrl] = useState(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    authedUrl(`/api/nas/thumb?path=${encodeURIComponent(filePath)}`)
+      .then(u => { if (!cancelled) setUrl(u); })
+      .catch(() => { if (!cancelled) setFailed(true); });
+    return () => { cancelled = true; };
+  }, [filePath]);
+
+  if (failed || !url) return null;
+
+  return (
+    <img
+      src={url}
+      alt=""
+      width={size}
+      height={size}
+      style={{ objectFit: 'cover', borderRadius: size > 40 ? '6px' : '3px', flexShrink: 0 }}
+      onError={() => setFailed(true)}
+    />
+  );
 }
 
 export default function Drive() {
@@ -99,6 +134,13 @@ export default function Drive() {
 
   // ─── Settings state ───
   const [storageInfo, setStorageInfo] = useState(null);
+
+  // ─── API Keys state ───
+  const [apiKeys, setApiKeys] = useState([]);
+  const [apiKeysLoading, setApiKeysLoading] = useState(false);
+  const [showCreateKey, setShowCreateKey] = useState(false);
+  const [newKeyName, setNewKeyName] = useState('');
+  const [createdKey, setCreatedKey] = useState(null);
 
   // Health check
   const checkHealth = useCallback(async () => {
@@ -311,9 +353,50 @@ export default function Drive() {
     }
   }
 
+  // ─── API Keys API ───
+  const fetchApiKeys = useCallback(async () => {
+    setApiKeysLoading(true);
+    try {
+      const data = await authedFetch('/api/keys');
+      setApiKeys(Array.isArray(data) ? data : []);
+    } catch {
+      setApiKeys([]);
+    } finally {
+      setApiKeysLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
-    if (activeView === 'settings') fetchStorage();
-  }, [activeView]);
+    if (activeView === 'settings') {
+      fetchStorage();
+      fetchApiKeys();
+    }
+  }, [activeView, fetchApiKeys]);
+
+  async function createApiKey() {
+    if (!newKeyName.trim()) return;
+    try {
+      const data = await authedFetch('/api/keys', {
+        method: 'POST',
+        body: JSON.stringify({ name: newKeyName }),
+      });
+      setCreatedKey(data.raw_key);
+      setNewKeyName('');
+      fetchApiKeys();
+    } catch (err) {
+      alert('Failed to create API key: ' + err.message);
+    }
+  }
+
+  async function revokeApiKey(id) {
+    if (!window.confirm('Revoke this API key? This cannot be undone.')) return;
+    try {
+      await authedFetch(`/api/keys/${id}`, { method: 'DELETE' });
+      fetchApiKeys();
+    } catch (err) {
+      alert('Revoke failed: ' + err.message);
+    }
+  }
 
   // ─── Multi-select logic ───
   function toggleSelect(item, index, e) {
@@ -459,26 +542,66 @@ export default function Drive() {
     clearSelection();
   }
 
-  // ─── Upload ───
+  // ─── Upload (tus for large files, multer for small) ───
   async function handleUploadFiles(files) {
+    const { supabase } = await import('../lib/supabase');
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) return;
+
     const fileList = Array.from(files);
     for (const file of fileList) {
       const id = Date.now() + '_' + file.name;
-      setUploads(prev => [...prev, { id, name: file.name, progress: 0, status: 'uploading' }]);
 
-      try {
-        const formData = new FormData();
-        formData.append('file', file);
-        formData.append('path', currentPath);
+      if (file.size > TUS_THRESHOLD) {
+        // Use tus for large files
+        setUploads(prev => [...prev, { id, name: file.name, progress: 0, status: 'uploading' }]);
 
-        await authedFetch('/api/nas/upload', { method: 'POST', body: formData });
-        setUploads(prev => prev.map(u => u.id === id ? { ...u, progress: 100, status: 'done' } : u));
-      } catch (err) {
-        setUploads(prev => prev.map(u => u.id === id ? { ...u, status: 'error', error: err.message } : u));
+        const upload = new tus.Upload(file, {
+          endpoint: `${API_URL}/api/nas/tus`,
+          retryDelays: [0, 1000, 3000, 5000],
+          chunkSize: 5 * 1024 * 1024,
+          metadata: {
+            filename: file.name,
+            targetPath: currentPath,
+            filetype: file.type,
+          },
+          headers: {
+            Authorization: `Bearer ${session.access_token}`,
+          },
+          onProgress(bytesUploaded, bytesTotal) {
+            const pct = Math.round((bytesUploaded / bytesTotal) * 100);
+            setUploads(prev => prev.map(u => u.id === id ? { ...u, progress: pct } : u));
+          },
+          onSuccess() {
+            setUploads(prev => prev.map(u => u.id === id ? { ...u, progress: 100, status: 'done' } : u));
+            fetchListing(currentPath);
+            setTimeout(() => setUploads(prev => prev.filter(u => u.id !== id)), 3000);
+          },
+          onError(err) {
+            setUploads(prev => prev.map(u => u.id === id ? { ...u, status: 'error', error: err.message } : u));
+          },
+        });
+
+        upload.start();
+      } else {
+        // Use multer for small files
+        setUploads(prev => [...prev, { id, name: file.name, progress: 0, status: 'uploading' }]);
+
+        try {
+          const formData = new FormData();
+          formData.append('file', file);
+          formData.append('path', currentPath);
+
+          await authedFetch('/api/nas/upload', { method: 'POST', body: formData });
+          setUploads(prev => prev.map(u => u.id === id ? { ...u, progress: 100, status: 'done' } : u));
+        } catch (err) {
+          setUploads(prev => prev.map(u => u.id === id ? { ...u, status: 'error', error: err.message } : u));
+        }
       }
     }
+    // Refresh for small files that completed synchronously
     fetchListing(currentPath);
-    setTimeout(() => setUploads(prev => prev.filter(u => u.status !== 'done')), 3000);
+    setTimeout(() => setUploads(prev => prev.filter(u => u.status === 'done' ? false : true)), 3000);
   }
 
   function handleDrop(e) {
@@ -565,10 +688,10 @@ export default function Drive() {
   useEffect(() => {
     if (!selectedFile) { setPreviewUrl(null); return; }
     const ext = (selectedFile.extension || '').toLowerCase();
-    const needsPreview = IMAGE_EXTENSIONS.includes(ext) || VIDEO_EXTENSIONS.includes(ext);
+    const needsPreview = IMAGE_EXTENSIONS.includes(ext) || VIDEO_EXTENSIONS.includes(ext) || AUDIO_EXTENSIONS.includes(ext);
     if (!needsPreview) { setPreviewUrl(null); return; }
     let cancelled = false;
-    authedUrl(`/api/nas/download?path=${encodeURIComponent(selectedFile.path)}`)
+    authedUrl(`/api/nas/stream?path=${encodeURIComponent(selectedFile.path)}`)
       .then((url) => { if (!cancelled) setPreviewUrl(url); })
       .catch(() => { if (!cancelled) setPreviewUrl(null); });
     return () => { cancelled = true; };
@@ -578,6 +701,7 @@ export default function Drive() {
   if (selectedFile) {
     const isImage = IMAGE_EXTENSIONS.includes((selectedFile.extension || '').toLowerCase());
     const isVideo = VIDEO_EXTENSIONS.includes((selectedFile.extension || '').toLowerCase());
+    const isAudio = AUDIO_EXTENSIONS.includes((selectedFile.extension || '').toLowerCase());
 
     return (
       <div style={s.layout}>
@@ -607,6 +731,15 @@ export default function Drive() {
                   src={previewUrl}
                   controls
                   style={{ maxWidth: '100%', maxHeight: '400px', borderRadius: '8px' }}
+                />
+              </div>
+            )}
+            {isAudio && previewUrl && (
+              <div style={s.previewArea}>
+                <audio
+                  src={previewUrl}
+                  controls
+                  style={{ width: '100%' }}
                 />
               </div>
             )}
@@ -643,7 +776,7 @@ export default function Drive() {
         onDragOver={activeView === 'files' ? handleDragOver : undefined}
         onDragLeave={activeView === 'files' ? handleDragLeave : undefined}
       >
-        {/* ═══ Files View ═══ */}
+        {/* Files View */}
         {activeView === 'files' && (
           <>
             {/* Header */}
@@ -759,7 +892,7 @@ export default function Drive() {
                   <div key={u.id} style={s.uploadItem}>
                     <span style={s.uploadName}>{u.name}</span>
                     <span style={{ ...s.uploadStatus, color: u.status === 'error' ? '#fca5a5' : u.status === 'done' ? '#86efac' : '#a5b4fc' }}>
-                      {u.status === 'uploading' ? 'Uploading...' : u.status === 'done' ? 'Done' : u.error || 'Error'}
+                      {u.status === 'uploading' ? `Uploading... ${u.progress}%` : u.status === 'done' ? 'Done' : u.error || 'Error'}
                     </span>
                   </div>
                 ))}
@@ -818,7 +951,11 @@ export default function Drive() {
                       >
                         {favorites.has(item.path) ? '\u2605' : '\u2606'}
                       </button>
-                      <FileIcon type={item.type === 'directory' ? 'folder' : getFileIcon(item.extension)} />
+                      {hasThumbnail(item) ? (
+                        <Thumbnail filePath={item.path} size={80} />
+                      ) : (
+                        <FileIcon type={item.type === 'directory' ? 'folder' : getFileIcon(item.extension)} />
+                      )}
                       {renaming?.path === item.path ? (
                         <input
                           autoFocus
@@ -874,7 +1011,11 @@ export default function Drive() {
                         onClick={(e) => { e.stopPropagation(); toggleSelect(item, i, e); }}
                         style={s.checkbox}
                       />
-                      <FileIcon type={item.type === 'directory' ? 'folder' : getFileIcon(item.extension)} />
+                      {hasThumbnail(item) ? (
+                        <Thumbnail filePath={item.path} size={20} />
+                      ) : (
+                        <FileIcon type={item.type === 'directory' ? 'folder' : getFileIcon(item.extension)} />
+                      )}
                       {renaming?.path === item.path ? (
                         <input
                           autoFocus
@@ -920,7 +1061,7 @@ export default function Drive() {
           </>
         )}
 
-        {/* ═══ Favorites View ═══ */}
+        {/* Favorites View */}
         {activeView === 'favorites' && (
           <FavoritesView
             items={favoriteItems}
@@ -935,7 +1076,7 @@ export default function Drive() {
           />
         )}
 
-        {/* ═══ Shared Links View ═══ */}
+        {/* Shared Links View */}
         {activeView === 'shared' && (
           <SharedLinksView
             links={shareLinks}
@@ -946,7 +1087,7 @@ export default function Drive() {
           />
         )}
 
-        {/* ═══ Trash View ═══ */}
+        {/* Trash View */}
         {activeView === 'trash' && (
           <TrashView
             items={trashItems}
@@ -957,17 +1098,27 @@ export default function Drive() {
           />
         )}
 
-        {/* ═══ Settings View ═══ */}
+        {/* Settings View */}
         {activeView === 'settings' && (
           <SettingsView
             user={user}
             storageInfo={storageInfo}
             signOut={signOut}
+            apiKeys={apiKeys}
+            apiKeysLoading={apiKeysLoading}
+            showCreateKey={showCreateKey}
+            setShowCreateKey={setShowCreateKey}
+            newKeyName={newKeyName}
+            setNewKeyName={setNewKeyName}
+            createdKey={createdKey}
+            setCreatedKey={setCreatedKey}
+            onCreateKey={createApiKey}
+            onRevokeKey={revokeApiKey}
           />
         )}
       </div>
 
-      {/* ═══ Create Share Dialog ═══ */}
+      {/* Create Share Dialog */}
       {showCreateShare && (
         <div style={s.dialogOverlay} onClick={() => { setShowCreateShare(null); setCreatedShareLink(null); }}>
           <div style={s.dialogCard} onClick={e => e.stopPropagation()}>
@@ -1034,7 +1185,7 @@ export default function Drive() {
         </div>
       )}
 
-      {/* ═══ Move Dialog ═══ */}
+      {/* Move Dialog */}
       {showMoveDialog && (
         <div style={s.dialogOverlay} onClick={() => setShowMoveDialog(false)}>
           <div style={{ ...s.dialogCard, maxWidth: '480px' }} onClick={e => e.stopPropagation()}>
@@ -1267,18 +1418,25 @@ function TrashView({ items, loading, onRestore, onDelete, onEmpty }) {
 }
 
 // ─── Settings View ───
-function SettingsView({ user, storageInfo, signOut }) {
+function SettingsView({ user, storageInfo, signOut, apiKeys, apiKeysLoading, showCreateKey, setShowCreateKey, newKeyName, setNewKeyName, createdKey, setCreatedKey, onCreateKey, onRevokeKey }) {
+  const [copiedKey, setCopiedKey] = useState(null);
   const percentColor = !storageInfo ? '#6366f1'
     : storageInfo.percent >= 90 ? '#ef4444'
     : storageInfo.percent >= 70 ? '#f59e0b'
     : '#6366f1';
+
+  function copyKey(key) {
+    navigator.clipboard.writeText(key);
+    setCopiedKey(key);
+    setTimeout(() => setCopiedKey(null), 2000);
+  }
 
   return (
     <div>
       <div style={s.header}>
         <h1 style={s.title}>Settings</h1>
       </div>
-      <div style={{ ...s.detailCard, maxWidth: '480px' }}>
+      <div style={{ ...s.detailCard, maxWidth: '600px' }}>
         <div style={s.detailMeta}>
           <div style={s.detailRow}><span style={s.detailLabel}>Email</span><span>{user?.email}</span></div>
           <div style={s.detailRow}><span style={s.detailLabel}>Joined</span><span>{user?.created_at ? formatDate(user.created_at) : '—'}</span></div>
@@ -1303,6 +1461,77 @@ function SettingsView({ user, storageInfo, signOut }) {
               transition: 'width 0.3s',
             }} />
           </div>
+        </div>
+
+        {/* API Keys Section */}
+        <div style={{ marginBottom: '24px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+            <span style={{ fontSize: '12px', fontWeight: 600, color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>API Keys</span>
+            <button onClick={() => { setShowCreateKey(true); setCreatedKey(null); }} style={s.smallBtn}>Create Key</button>
+          </div>
+
+          {/* Create key form */}
+          {showCreateKey && (
+            <div style={{ marginBottom: '12px', padding: '12px', borderRadius: '8px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}>
+              {!createdKey ? (
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <input
+                    autoFocus
+                    value={newKeyName}
+                    onChange={e => setNewKeyName(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') onCreateKey(); if (e.key === 'Escape') setShowCreateKey(false); }}
+                    placeholder="Key name (e.g. CI/CD)"
+                    style={{ ...s.dialogInput, flex: 1 }}
+                  />
+                  <button onClick={onCreateKey} style={s.dialogConfirmBtn}>Create</button>
+                  <button onClick={() => setShowCreateKey(false)} style={s.dialogCancelBtn}>Cancel</button>
+                </div>
+              ) : (
+                <div>
+                  <div style={{ fontSize: '12px', color: '#f59e0b', marginBottom: '8px', fontWeight: 500 }}>
+                    Copy this key now — you won't be able to see it again.
+                  </div>
+                  <div style={s.linkCopyRow}>
+                    <input readOnly value={createdKey} style={s.linkCopyInput} onFocus={e => e.target.select()} />
+                    <button onClick={() => copyKey(createdKey)} style={s.linkCopyBtn}>
+                      {copiedKey === createdKey ? 'Copied!' : 'Copy'}
+                    </button>
+                  </div>
+                  <div style={{ marginTop: '8px', textAlign: 'right' }}>
+                    <button onClick={() => { setShowCreateKey(false); setCreatedKey(null); }} style={s.smallBtn}>Done</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Keys table */}
+          {apiKeysLoading ? (
+            <div style={{ fontSize: '13px', color: 'rgba(255,255,255,0.3)', padding: '12px 0' }}>Loading...</div>
+          ) : apiKeys.length === 0 ? (
+            <div style={{ fontSize: '13px', color: 'rgba(255,255,255,0.3)', padding: '12px 0' }}>No API keys yet.</div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1px' }}>
+              {apiKeys.map(key => {
+                const isRevoked = !!key.revoked_at;
+                return (
+                  <div key={key.id} style={{ ...s.fileListRow, ...(isRevoked ? { opacity: 0.4 } : {}) }}>
+                    <span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.4)', width: '80px', fontFamily: 'monospace', flexShrink: 0 }}>{key.key_prefix}...</span>
+                    <span style={{ ...s.fileListName, ...(isRevoked ? { textDecoration: 'line-through' } : {}) }}>{key.name}</span>
+                    <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.3)', width: '80px', textAlign: 'right', flexShrink: 0 }}>{formatDate(key.created_at)}</span>
+                    <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.3)', width: '80px', textAlign: 'right', flexShrink: 0 }}>{key.last_used_at ? formatDate(key.last_used_at) : 'Never'}</span>
+                    <span style={{ width: '70px', display: 'flex', justifyContent: 'flex-end', flexShrink: 0 }}>
+                      {isRevoked ? (
+                        <span style={{ fontSize: '11px', color: '#fca5a5' }}>Revoked</span>
+                      ) : (
+                        <button onClick={() => onRevokeKey(key.id)} style={{ ...s.smallBtn, color: '#fca5a5', borderColor: 'rgba(252,165,165,0.2)' }}>Revoke</button>
+                      )}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         <button onClick={signOut} style={{ ...s.dialogCancelBtn, width: '100%', textAlign: 'center' }}>

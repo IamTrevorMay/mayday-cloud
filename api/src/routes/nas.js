@@ -3,12 +3,14 @@ const router = express.Router();
 const path = require('path');
 const fs = require('fs');
 const fsp = fs.promises;
+const crypto = require('crypto');
 const multer = require('multer');
 const { execFile } = require('child_process');
 const { promisify } = require('util');
 const { createClient } = require('@supabase/supabase-js');
 
 const { getMimeType } = require('../utils/mime');
+const { requireRole } = require('../middleware/auth');
 
 const execFileAsync = promisify(execFile);
 
@@ -19,6 +21,9 @@ function getSupabase() {
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 500 * 1024 * 1024 } });
 
 const ASSETS_ROOT = process.env.ASSETS_ROOT || '/Volumes/May Server';
+const HIDDEN_DIRS = new Set(['.trash', '.thumbs', '.tus-staging']);
+
+const writeGuard = requireRole('admin', 'member');
 
 function sanitizePath(requestedPath, assetsRoot) {
   const resolved = path.resolve(assetsRoot, requestedPath || '');
@@ -50,7 +55,8 @@ router.get('/list', async (req, res) => {
 
     const isRoot = !requestedPath || requestedPath === '' || requestedPath === '/';
     let items = (await Promise.all(entries.map(async (entry) => {
-      if (isRoot && entry.name === '.trash') return null;
+      // Hide system directories at root level
+      if (isRoot && HIDDEN_DIRS.has(entry.name)) return null;
       try {
         const entryPath = path.join(fullPath, entry.name);
         const stat = await fsp.stat(entryPath);
@@ -129,8 +135,140 @@ router.get('/download', async (req, res) => {
   }
 });
 
+// GET /api/nas/stream?path=... — inline streaming with range support
+router.get('/stream', async (req, res) => {
+  try {
+    const requestedPath = req.query.path;
+    if (!requestedPath) return res.status(400).json({ error: 'path required' });
+    const fullPath = sanitizePath(requestedPath, ASSETS_ROOT);
+    const fileName = path.basename(fullPath);
+
+    const stat = await fsp.stat(fullPath);
+    if (stat.isDirectory()) return res.status(400).json({ error: 'Cannot stream a directory' });
+
+    const ext = path.extname(fileName).toLowerCase().slice(1);
+    const mime = getMimeType(ext);
+
+    res.setHeader('Content-Type', mime);
+    res.setHeader('Content-Disposition', `inline; filename="${fileName}"`);
+    res.setHeader('Accept-Ranges', 'bytes');
+
+    const range = req.headers.range;
+    if (range) {
+      const match = range.match(/bytes=(\d+)-(\d*)/);
+      if (!match) return res.status(416).json({ error: 'Invalid range' });
+
+      const start = parseInt(match[1], 10);
+      const end = match[2] ? parseInt(match[2], 10) : stat.size - 1;
+
+      if (start >= stat.size || end >= stat.size || start > end) {
+        res.setHeader('Content-Range', `bytes */${stat.size}`);
+        return res.status(416).json({ error: 'Range not satisfiable' });
+      }
+
+      res.setHeader('Content-Range', `bytes ${start}-${end}/${stat.size}`);
+      res.setHeader('Content-Length', end - start + 1);
+      res.status(206);
+
+      const stream = fs.createReadStream(fullPath, { start, end });
+      stream.on('error', (err) => {
+        if (!res.headersSent) res.status(500).json({ error: err.message });
+        else res.end();
+      });
+      stream.pipe(res);
+    } else {
+      res.setHeader('Content-Length', stat.size);
+      const stream = fs.createReadStream(fullPath);
+      stream.on('error', (err) => {
+        if (!res.headersSent) res.status(500).json({ error: err.message });
+        else res.end();
+      });
+      stream.pipe(res);
+    }
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// GET /api/nas/thumb?path=...
+router.get('/thumb', async (req, res) => {
+  try {
+    const requestedPath = req.query.path;
+    if (!requestedPath) return res.status(400).json({ error: 'path required' });
+    const fullPath = sanitizePath(requestedPath, ASSETS_ROOT);
+
+    const ext = path.extname(fullPath).toLowerCase().slice(1);
+    const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'];
+    const VIDEO_EXTS = ['mp4', 'mov', 'avi', 'mkv', 'webm'];
+
+    if (!IMAGE_EXTS.includes(ext) && !VIDEO_EXTS.includes(ext)) {
+      return res.status(404).json({ error: 'Unsupported type for thumbnail' });
+    }
+
+    const stat = await fsp.stat(fullPath);
+    const relativePath = path.relative(ASSETS_ROOT, fullPath);
+    const cacheKey = crypto.createHash('sha256')
+      .update(relativePath + ':' + stat.mtimeMs)
+      .digest('hex')
+      .slice(0, 16);
+
+    const thumbDir = path.join(ASSETS_ROOT, '.thumbs');
+    await fsp.mkdir(thumbDir, { recursive: true });
+    const thumbPath = path.join(thumbDir, `${cacheKey}.jpg`);
+
+    // Serve from cache if exists
+    try {
+      await fsp.access(thumbPath);
+      res.setHeader('Content-Type', 'image/jpeg');
+      res.setHeader('Cache-Control', 'public, max-age=86400');
+      return fs.createReadStream(thumbPath).pipe(res);
+    } catch {
+      // Not cached yet, generate below
+    }
+
+    const sharp = require('sharp');
+
+    if (IMAGE_EXTS.includes(ext)) {
+      await sharp(fullPath)
+        .resize(200, 200, { fit: 'cover' })
+        .jpeg({ quality: 70 })
+        .toFile(thumbPath);
+    } else {
+      // Video: extract frame with ffmpeg
+      const ffmpeg = require('fluent-ffmpeg');
+      const os = require('os');
+      const tempPng = path.join(os.tmpdir(), `mck_frame_${cacheKey}.png`);
+
+      await new Promise((resolve, reject) => {
+        ffmpeg(fullPath)
+          .screenshots({
+            timestamps: ['1'],
+            filename: path.basename(tempPng),
+            folder: path.dirname(tempPng),
+            size: '400x?',
+          })
+          .on('end', resolve)
+          .on('error', reject);
+      });
+
+      await sharp(tempPng)
+        .resize(200, 200, { fit: 'cover' })
+        .jpeg({ quality: 70 })
+        .toFile(thumbPath);
+
+      fsp.unlink(tempPng).catch(() => {});
+    }
+
+    res.setHeader('Content-Type', 'image/jpeg');
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    fs.createReadStream(thumbPath).pipe(res);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /api/nas/upload
-router.post('/upload', upload.single('file'), async (req, res) => {
+router.post('/upload', writeGuard, upload.single('file'), async (req, res) => {
   try {
     const targetPath = req.body.path || '';
     if (!req.file) return res.status(400).json({ error: 'No file provided' });
@@ -152,7 +290,7 @@ router.post('/upload', upload.single('file'), async (req, res) => {
 });
 
 // POST /api/nas/mkdir
-router.post('/mkdir', async (req, res) => {
+router.post('/mkdir', writeGuard, async (req, res) => {
   try {
     const { path: dirPath } = req.body;
     if (!dirPath) return res.status(400).json({ error: 'path required' });
@@ -165,7 +303,7 @@ router.post('/mkdir', async (req, res) => {
 });
 
 // POST /api/nas/rename
-router.post('/rename', async (req, res) => {
+router.post('/rename', writeGuard, async (req, res) => {
   try {
     const { path: oldPath, newName } = req.body;
     if (!oldPath || !newName) return res.status(400).json({ error: 'path and newName required' });
@@ -180,7 +318,7 @@ router.post('/rename', async (req, res) => {
 });
 
 // POST /api/nas/move
-router.post('/move', async (req, res) => {
+router.post('/move', writeGuard, async (req, res) => {
   try {
     const { path: itemPath, destination } = req.body;
     if (!itemPath || destination === undefined) return res.status(400).json({ error: 'path and destination required' });
@@ -205,12 +343,11 @@ router.post('/move', async (req, res) => {
 });
 
 // DELETE /api/nas/delete
-router.delete('/delete', async (req, res) => {
+router.delete('/delete', writeGuard, async (req, res) => {
   try {
     const { path: filePath } = req.body;
     if (!filePath) return res.status(400).json({ error: 'path required' });
     const fullPath = sanitizePath(filePath, ASSETS_ROOT);
-    const stat = await fsp.stat(fullPath);
 
     // Move to .trash instead of permanent delete
     const trashDir = path.join(ASSETS_ROOT, '.trash');
@@ -239,6 +376,7 @@ router.get('/search', async (req, res) => {
       let entries;
       try { entries = await fsp.readdir(dir, { withFileTypes: true }); } catch { return results; }
       for (const entry of entries) {
+        if (HIDDEN_DIRS.has(entry.name)) continue;
         try {
           const entryPath = path.join(dir, entry.name);
           const isDir = entry.isDirectory();
@@ -300,7 +438,7 @@ router.get('/trash', async (req, res) => {
 });
 
 // POST /api/nas/trash/restore — restore item from trash
-router.post('/trash/restore', async (req, res) => {
+router.post('/trash/restore', writeGuard, async (req, res) => {
   try {
     const { trashName } = req.body;
     if (!trashName) return res.status(400).json({ error: 'trashName required' });
@@ -333,7 +471,7 @@ router.post('/trash/restore', async (req, res) => {
 });
 
 // DELETE /api/nas/trash/delete — permanently delete a single trash item
-router.delete('/trash/delete', async (req, res) => {
+router.delete('/trash/delete', writeGuard, async (req, res) => {
   try {
     const { trashName } = req.body;
     if (!trashName) return res.status(400).json({ error: 'trashName required' });
@@ -355,7 +493,7 @@ router.delete('/trash/delete', async (req, res) => {
 });
 
 // DELETE /api/nas/trash/empty — permanently delete all trash items
-router.delete('/trash/empty', async (req, res) => {
+router.delete('/trash/empty', writeGuard, async (req, res) => {
   try {
     const trashDir = path.join(ASSETS_ROOT, '.trash');
     try { await fsp.access(trashDir); } catch { return res.json({ success: true, deleted: 0 }); }
@@ -422,7 +560,7 @@ router.get('/favorites', async (req, res) => {
 });
 
 // POST /api/nas/favorites — add a favorite
-router.post('/favorites', async (req, res) => {
+router.post('/favorites', writeGuard, async (req, res) => {
   try {
     const { file_path } = req.body;
     if (!file_path) return res.status(400).json({ error: 'file_path required' });
@@ -440,7 +578,7 @@ router.post('/favorites', async (req, res) => {
 });
 
 // DELETE /api/nas/favorites — remove a favorite
-router.delete('/favorites', async (req, res) => {
+router.delete('/favorites', writeGuard, async (req, res) => {
   try {
     const { file_path } = req.body;
     if (!file_path) return res.status(400).json({ error: 'file_path required' });

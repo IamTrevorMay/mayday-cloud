@@ -2,13 +2,16 @@ const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');
 const { createClient } = require('@supabase/supabase-js');
+const { requireRole } = require('../middleware/auth');
 
 function getSupabase() {
   return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 }
 
+const writeGuard = requireRole('admin', 'member');
+
 // POST /api/shares — Create a share link (authed)
-router.post('/', async (req, res) => {
+router.post('/', writeGuard, async (req, res) => {
   try {
     const { target_path, mode = 'upload', max_uses = 10, expires_in_hours = 72 } = req.body;
     if (!target_path) return res.status(400).json({ error: 'target_path required' });
@@ -52,7 +55,7 @@ router.get('/', async (req, res) => {
 });
 
 // DELETE /api/shares/:id — Revoke a share link (authed)
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', writeGuard, async (req, res) => {
   try {
     const sb = getSupabase();
     const { error } = await sb
