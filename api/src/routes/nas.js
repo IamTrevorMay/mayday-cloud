@@ -5,6 +5,8 @@ const fs = require('fs');
 const fsp = fs.promises;
 const multer = require('multer');
 
+const { getMimeType } = require('../utils/mime');
+
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 500 * 1024 * 1024 } });
 
 const ASSETS_ROOT = process.env.ASSETS_ROOT || '/Volumes/May Server';
@@ -15,16 +17,6 @@ function sanitizePath(requestedPath, assetsRoot) {
     throw new Error('Path traversal blocked');
   }
   return resolved;
-}
-
-function getMimeType(ext) {
-  const types = {
-    mp4: 'video/mp4', mov: 'video/quicktime', avi: 'video/x-msvideo', mkv: 'video/x-matroska',
-    mp3: 'audio/mpeg', wav: 'audio/wav', flac: 'audio/flac', aac: 'audio/aac',
-    jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp',
-    pdf: 'application/pdf', zip: 'application/zip',
-  };
-  return types[ext] || 'application/octet-stream';
 }
 
 // GET /api/nas/health
@@ -47,7 +39,9 @@ router.get('/list', async (req, res) => {
 
     const entries = await fsp.readdir(fullPath, { withFileTypes: true });
 
+    const isRoot = !requestedPath || requestedPath === '' || requestedPath === '/';
     let items = (await Promise.all(entries.map(async (entry) => {
+      if (isRoot && entry.name === '.trash') return null;
       try {
         const entryPath = path.join(fullPath, entry.name);
         const stat = await fsp.stat(entryPath);
@@ -115,7 +109,12 @@ router.get('/download', async (req, res) => {
     res.setHeader('Content-Type', getMimeType(ext));
     res.setHeader('Content-Length', stat.size);
 
-    fs.createReadStream(fullPath).pipe(res);
+    const stream = fs.createReadStream(fullPath);
+    stream.on('error', (err) => {
+      if (!res.headersSent) res.status(500).json({ error: err.message });
+      else res.end();
+    });
+    stream.pipe(res);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -228,6 +227,111 @@ router.get('/search', async (req, res) => {
 
     const results = await walk(searchRoot);
     res.json({ query, results });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// GET /api/nas/trash — list trash contents
+router.get('/trash', async (req, res) => {
+  try {
+    const trashDir = path.join(ASSETS_ROOT, '.trash');
+    try { await fsp.access(trashDir); } catch { return res.json({ items: [] }); }
+
+    const entries = await fsp.readdir(trashDir, { withFileTypes: true });
+    const items = (await Promise.all(entries.map(async (entry) => {
+      try {
+        const entryPath = path.join(trashDir, entry.name);
+        const stat = await fsp.stat(entryPath);
+        // Parse {timestamp}_{basename}
+        const underscoreIdx = entry.name.indexOf('_');
+        const timestamp = underscoreIdx > 0 ? parseInt(entry.name.slice(0, underscoreIdx), 10) : 0;
+        const originalName = underscoreIdx > 0 ? entry.name.slice(underscoreIdx + 1) : entry.name;
+        return {
+          trashName: entry.name,
+          originalName,
+          type: entry.isDirectory() ? 'directory' : 'file',
+          size: stat.size,
+          deletedAt: timestamp ? new Date(timestamp).toISOString() : null,
+          extension: entry.isDirectory() ? null : path.extname(originalName).toLowerCase().slice(1) || null,
+        };
+      } catch { return null; }
+    }))).filter(Boolean);
+
+    items.sort((a, b) => new Date(b.deletedAt || 0) - new Date(a.deletedAt || 0));
+    res.json({ items });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// POST /api/nas/trash/restore — restore item from trash
+router.post('/trash/restore', async (req, res) => {
+  try {
+    const { trashName } = req.body;
+    if (!trashName) return res.status(400).json({ error: 'trashName required' });
+
+    const trashDir = path.join(ASSETS_ROOT, '.trash');
+    const trashPath = path.join(trashDir, trashName);
+    if (!trashPath.startsWith(trashDir)) return res.status(400).json({ error: 'Path traversal blocked' });
+
+    // Parse original name
+    const underscoreIdx = trashName.indexOf('_');
+    const originalName = underscoreIdx > 0 ? trashName.slice(underscoreIdx + 1) : trashName;
+    let destPath = path.join(ASSETS_ROOT, originalName);
+
+    // Collision handling: append (1), (2), etc.
+    if (await fsp.access(destPath).then(() => true).catch(() => false)) {
+      const ext = path.extname(originalName);
+      const base = ext ? originalName.slice(0, -ext.length) : originalName;
+      let counter = 1;
+      while (await fsp.access(destPath).then(() => true).catch(() => false)) {
+        destPath = path.join(ASSETS_ROOT, `${base} (${counter})${ext}`);
+        counter++;
+      }
+    }
+
+    await fsp.rename(trashPath, destPath);
+    res.json({ success: true, restoredTo: path.relative(ASSETS_ROOT, destPath) });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// DELETE /api/nas/trash/delete — permanently delete a single trash item
+router.delete('/trash/delete', async (req, res) => {
+  try {
+    const { trashName } = req.body;
+    if (!trashName) return res.status(400).json({ error: 'trashName required' });
+
+    const trashDir = path.join(ASSETS_ROOT, '.trash');
+    const trashPath = path.join(trashDir, trashName);
+    if (!trashPath.startsWith(trashDir)) return res.status(400).json({ error: 'Path traversal blocked' });
+
+    const stat = await fsp.stat(trashPath);
+    if (stat.isDirectory()) {
+      await fsp.rm(trashPath, { recursive: true, force: true });
+    } else {
+      await fsp.unlink(trashPath);
+    }
+    res.json({ success: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// DELETE /api/nas/trash/empty — permanently delete all trash items
+router.delete('/trash/empty', async (req, res) => {
+  try {
+    const trashDir = path.join(ASSETS_ROOT, '.trash');
+    try { await fsp.access(trashDir); } catch { return res.json({ success: true, deleted: 0 }); }
+
+    const entries = await fsp.readdir(trashDir);
+    for (const entry of entries) {
+      const entryPath = path.join(trashDir, entry);
+      await fsp.rm(entryPath, { recursive: true, force: true });
+    }
+    res.json({ success: true, deleted: entries.length });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }

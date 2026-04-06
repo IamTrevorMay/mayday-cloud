@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { authedFetch } from '../lib/supabase';
+import { authedFetch, authedUrl } from '../lib/supabase';
 
 const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp'];
 const VIDEO_EXTENSIONS = ['mp4', 'mov', 'avi', 'mkv', 'webm'];
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:4000';
+const WEB_URL = process.env.REACT_APP_WEB_URL || window.location.origin;
 
 function formatBytes(bytes) {
   if (!bytes || bytes === 0) return '0 B';
@@ -45,20 +46,40 @@ export default function Drive() {
   const [error, setError] = useState(null);
 
   // Upload state
-  const [uploads, setUploads] = useState([]); // [{name, progress, status}]
+  const [uploads, setUploads] = useState([]);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef(null);
 
   // Context menu
-  const [contextMenu, setContextMenu] = useState(null); // {x, y, item}
+  const [contextMenu, setContextMenu] = useState(null);
 
   // Rename
-  const [renaming, setRenaming] = useState(null); // item being renamed
+  const [renaming, setRenaming] = useState(null);
   const [renameValue, setRenameValue] = useState('');
 
   // New folder
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
+
+  // Preview URL (authenticated)
+  const [previewUrl, setPreviewUrl] = useState(null);
+
+  // Sidebar navigation
+  const [activeView, setActiveView] = useState('files');
+
+  // Share links state
+  const [shareLinks, setShareLinks] = useState([]);
+  const [shareLinksLoading, setShareLinksLoading] = useState(false);
+  const [showCreateShare, setShowCreateShare] = useState(null); // null or { path, type }
+  const [shareMode, setShareMode] = useState('upload');
+  const [shareExpiry, setShareExpiry] = useState('');
+  const [shareMaxUses, setShareMaxUses] = useState('');
+  const [createdShareLink, setCreatedShareLink] = useState(null);
+  const [copiedLink, setCopiedLink] = useState(null);
+
+  // Trash state
+  const [trashItems, setTrashItems] = useState([]);
+  const [trashLoading, setTrashLoading] = useState(false);
 
   // Health check
   const checkHealth = useCallback(async () => {
@@ -89,7 +110,124 @@ export default function Drive() {
     }
   }, [sortBy, sortOrder]);
 
-  useEffect(() => { fetchListing(currentPath); }, [currentPath, fetchListing]);
+  useEffect(() => {
+    if (activeView === 'files') fetchListing(currentPath);
+  }, [currentPath, fetchListing, activeView]);
+
+  // ─── Share Links API ───
+  const fetchShareLinks = useCallback(async () => {
+    setShareLinksLoading(true);
+    try {
+      const data = await authedFetch('/api/shares');
+      setShareLinks(Array.isArray(data) ? data : []);
+    } catch {
+      setShareLinks([]);
+    } finally {
+      setShareLinksLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeView === 'shared') fetchShareLinks();
+  }, [activeView, fetchShareLinks]);
+
+  function openCreateShare(itemPath, itemType) {
+    setShowCreateShare({ path: itemPath, type: itemType });
+    setShareMode('upload');
+    setShareExpiry('');
+    setShareMaxUses('');
+    setCreatedShareLink(null);
+  }
+
+  async function createShareLink() {
+    try {
+      const body = {
+        target_path: showCreateShare.path,
+        mode: shareMode,
+      };
+      if (shareExpiry) {
+        const hoursUntil = Math.max(1, Math.round((new Date(shareExpiry) - Date.now()) / 3600000));
+        body.expires_in_hours = hoursUntil;
+      }
+      if (shareMaxUses) body.max_uses = parseInt(shareMaxUses, 10);
+
+      const data = await authedFetch('/api/shares', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      });
+      setCreatedShareLink(`${WEB_URL}/drop/${data.token}`);
+    } catch (err) {
+      alert('Failed to create share link: ' + err.message);
+    }
+  }
+
+  async function revokeShareLink(id) {
+    if (!window.confirm('Revoke this share link?')) return;
+    try {
+      await authedFetch(`/api/shares/${id}`, { method: 'DELETE' });
+      fetchShareLinks();
+    } catch (err) {
+      alert('Revoke failed: ' + err.message);
+    }
+  }
+
+  function copyShareUrl(url) {
+    navigator.clipboard.writeText(url);
+    setCopiedLink(url);
+    setTimeout(() => setCopiedLink(null), 2000);
+  }
+
+  // ─── Trash API ───
+  const fetchTrash = useCallback(async () => {
+    setTrashLoading(true);
+    try {
+      const data = await authedFetch('/api/nas/trash');
+      setTrashItems(data.items || []);
+    } catch {
+      setTrashItems([]);
+    } finally {
+      setTrashLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeView === 'trash') fetchTrash();
+  }, [activeView, fetchTrash]);
+
+  async function restoreTrashItem(trashName) {
+    try {
+      await authedFetch('/api/nas/trash/restore', {
+        method: 'POST',
+        body: JSON.stringify({ trashName }),
+      });
+      fetchTrash();
+    } catch (err) {
+      alert('Restore failed: ' + err.message);
+    }
+  }
+
+  async function permanentDeleteTrashItem(trashName) {
+    if (!window.confirm('Permanently delete this item? This cannot be undone.')) return;
+    try {
+      await authedFetch('/api/nas/trash/delete', {
+        method: 'DELETE',
+        body: JSON.stringify({ trashName }),
+      });
+      fetchTrash();
+    } catch (err) {
+      alert('Delete failed: ' + err.message);
+    }
+  }
+
+  async function emptyTrash() {
+    if (!window.confirm('Permanently delete all items in trash? This cannot be undone.')) return;
+    try {
+      await authedFetch('/api/nas/trash/empty', { method: 'DELETE' });
+      fetchTrash();
+    } catch (err) {
+      alert('Empty trash failed: ' + err.message);
+    }
+  }
 
   // Search
   async function handleSearch(e) {
@@ -132,6 +270,12 @@ export default function Drive() {
     return currentPath.split('/').filter(Boolean);
   }
 
+  function handleNavigate(view) {
+    setActiveView(view);
+    setSelectedFile(null);
+    clearSearch();
+  }
+
   // ─── Upload ───
   async function handleUploadFiles(files) {
     const fileList = Array.from(files);
@@ -150,9 +294,7 @@ export default function Drive() {
         setUploads(prev => prev.map(u => u.id === id ? { ...u, status: 'error', error: err.message } : u));
       }
     }
-    // Refresh listing
     fetchListing(currentPath);
-    // Clear completed uploads after 3s
     setTimeout(() => setUploads(prev => prev.filter(u => u.status !== 'done')), 3000);
   }
 
@@ -229,13 +371,25 @@ export default function Drive() {
   }
 
   async function handleDownload(filePath) {
-    // Build authed download URL
     const { supabase } = await import('../lib/supabase');
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) return;
     const url = `${API_URL}/api/nas/download?path=${encodeURIComponent(filePath)}&token=${session.access_token}`;
     window.open(url, '_blank');
   }
+
+  // Generate authenticated preview URL when a file is selected
+  useEffect(() => {
+    if (!selectedFile) { setPreviewUrl(null); return; }
+    const ext = (selectedFile.extension || '').toLowerCase();
+    const needsPreview = IMAGE_EXTENSIONS.includes(ext) || VIDEO_EXTENSIONS.includes(ext);
+    if (!needsPreview) { setPreviewUrl(null); return; }
+    let cancelled = false;
+    authedUrl(`/api/nas/download?path=${encodeURIComponent(selectedFile.path)}`)
+      .then((url) => { if (!cancelled) setPreviewUrl(url); })
+      .catch(() => { if (!cancelled) setPreviewUrl(null); });
+    return () => { cancelled = true; };
+  }, [selectedFile]);
 
   // ─── File Detail View ───
   if (selectedFile) {
@@ -244,7 +398,7 @@ export default function Drive() {
 
     return (
       <div style={s.layout}>
-        <Sidebar user={user} signOut={signOut} />
+        <Sidebar user={user} signOut={signOut} activeView={activeView} onNavigate={handleNavigate} />
         <div style={s.main}>
           <div style={s.header}>
             <button onClick={() => setSelectedFile(null)} style={s.backBtn}>
@@ -254,20 +408,20 @@ export default function Drive() {
             <h1 style={s.title}>{selectedFile.name}</h1>
           </div>
           <div style={s.detailCard}>
-            {isImage && (
+            {isImage && previewUrl && (
               <div style={s.previewArea}>
                 <img
-                  src={`${API_URL}/api/nas/download?path=${encodeURIComponent(selectedFile.path)}`}
+                  src={previewUrl}
                   alt={selectedFile.name}
                   style={s.previewImg}
                   onError={(e) => { e.target.style.display = 'none'; }}
                 />
               </div>
             )}
-            {isVideo && (
+            {isVideo && previewUrl && (
               <div style={s.previewArea}>
                 <video
-                  src={`${API_URL}/api/nas/download?path=${encodeURIComponent(selectedFile.path)}`}
+                  src={previewUrl}
                   controls
                   style={{ maxWidth: '100%', maxHeight: '400px', borderRadius: '8px' }}
                 />
@@ -298,236 +452,448 @@ export default function Drive() {
 
   return (
     <div style={s.layout}>
-      <Sidebar user={user} signOut={signOut} />
+      <Sidebar user={user} signOut={signOut} activeView={activeView} onNavigate={handleNavigate} />
       <div
-        style={{ ...s.main, ...(dragOver ? { background: 'rgba(99,102,241,0.05)' } : {}) }}
-        onDrop={handleDrop}
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
+        style={{ ...s.main, ...(dragOver && activeView === 'files' ? { background: 'rgba(99,102,241,0.05)' } : {}) }}
+        onDrop={activeView === 'files' ? handleDrop : undefined}
+        onDragOver={activeView === 'files' ? handleDragOver : undefined}
+        onDragLeave={activeView === 'files' ? handleDragLeave : undefined}
       >
-        {/* Header */}
-        <div style={s.header}>
-          {currentPath && (
-            <button onClick={goBack} style={s.backBtn}>
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10 2L4 8l6 6" /></svg>
-            </button>
-          )}
-          <div style={s.breadcrumbs}>
-            <button onClick={() => { setCurrentPath(''); clearSearch(); }} style={{ ...s.breadcrumbBtn, ...(breadcrumbs.length === 0 ? { color: '#e2e8f0', fontWeight: 600 } : {}) }}>
-              My Files
-            </button>
-            {breadcrumbs.map((seg, i) => (
-              <React.Fragment key={i}>
-                <span style={s.breadcrumbSep}>/</span>
-                <button
-                  onClick={() => { navigateTo(breadcrumbs.slice(0, i + 1).join('/')); }}
-                  style={{ ...s.breadcrumbBtn, ...(i === breadcrumbs.length - 1 ? { color: '#e2e8f0', fontWeight: 600 } : {}) }}
-                >
-                  {seg}
+        {/* ═══ Files View ═══ */}
+        {activeView === 'files' && (
+          <>
+            {/* Header */}
+            <div style={s.header}>
+              {currentPath && (
+                <button onClick={goBack} style={s.backBtn}>
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10 2L4 8l6 6" /></svg>
                 </button>
-              </React.Fragment>
-            ))}
-          </div>
-          <div style={s.headerRight}>
-            <div style={s.statusDot}>
-              <span style={{ ...s.dot, background: nasStatus === null ? '#f59e0b' : nasStatus ? '#22c55e' : '#ef4444' }} />
-              <span style={s.statusText}>
-                {nasStatus === null ? 'Checking...' : nasStatus ? 'Connected' : 'Offline'}
-              </span>
-            </div>
-          </div>
-        </div>
-
-        {/* Toolbar */}
-        <div style={s.toolbar}>
-          <form onSubmit={handleSearch} style={s.searchForm}>
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="rgba(255,255,255,0.3)" strokeWidth="2" style={{ flexShrink: 0 }}>
-              <circle cx="7" cy="7" r="5" /><path d="M11 11l3 3" />
-            </svg>
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
-              placeholder="Search files..."
-              style={s.searchInput}
-            />
-            {searchResults && <button type="button" onClick={clearSearch} style={s.clearSearchBtn}>Clear</button>}
-          </form>
-          <button onClick={() => setCreatingFolder(true)} style={s.actionBtn} title="New folder">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M3 3h4l1.5 1.5H13a1 1 0 011 1V12a1 1 0 01-1 1H3a1 1 0 01-1-1V4a1 1 0 011-1z" /><path d="M8 7v4M6 9h4" /></svg>
-          </button>
-          <button onClick={() => fileInputRef.current?.click()} style={s.uploadBtn}>
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M8 12V3M4 7l4-4 4 4" /><path d="M2 13h12" /></svg>
-            Upload
-          </button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            style={{ display: 'none' }}
-            onChange={e => { if (e.target.files.length) handleUploadFiles(e.target.files); e.target.value = ''; }}
-          />
-          <div style={s.viewControls}>
-            <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={s.sortSelect}>
-              <option value="name">Name</option>
-              <option value="size">Size</option>
-              <option value="modified">Modified</option>
-            </select>
-            <button onClick={() => setSortOrder(o => o === 'asc' ? 'desc' : 'asc')} style={s.iconBtn}>
-              {sortOrder === 'asc' ? '\u2191' : '\u2193'}
-            </button>
-            <button onClick={() => setViewMode(v => v === 'grid' ? 'list' : 'grid')} style={s.iconBtn}>
-              {viewMode === 'grid' ? (
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="1" width="6" height="6" rx="1" /><rect x="9" y="1" width="6" height="6" rx="1" /><rect x="1" y="9" width="6" height="6" rx="1" /><rect x="9" y="9" width="6" height="6" rx="1" /></svg>
-              ) : (
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="2" width="14" height="3" rx="1" /><rect x="1" y="7" width="14" height="3" rx="1" /><rect x="1" y="12" width="14" height="3" rx="1" /></svg>
               )}
-            </button>
-          </div>
-        </div>
-
-        {/* New folder input */}
-        {creatingFolder && (
-          <div style={s.newFolderRow}>
-            <FileIcon type="folder" />
-            <input
-              autoFocus
-              value={newFolderName}
-              onChange={e => setNewFolderName(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') handleNewFolder(); if (e.key === 'Escape') { setCreatingFolder(false); setNewFolderName(''); } }}
-              onBlur={handleNewFolder}
-              placeholder="Folder name..."
-              style={s.renameInput}
-            />
-          </div>
-        )}
-
-        {/* Upload progress */}
-        {uploads.length > 0 && (
-          <div style={s.uploadsBar}>
-            {uploads.map(u => (
-              <div key={u.id} style={s.uploadItem}>
-                <span style={s.uploadName}>{u.name}</span>
-                <span style={{ ...s.uploadStatus, color: u.status === 'error' ? '#fca5a5' : u.status === 'done' ? '#86efac' : '#a5b4fc' }}>
-                  {u.status === 'uploading' ? 'Uploading...' : u.status === 'done' ? 'Done' : u.error || 'Error'}
-                </span>
+              <div style={s.breadcrumbs}>
+                <button onClick={() => { setCurrentPath(''); clearSearch(); }} style={{ ...s.breadcrumbBtn, ...(breadcrumbs.length === 0 ? { color: '#e2e8f0', fontWeight: 600 } : {}) }}>
+                  My Files
+                </button>
+                {breadcrumbs.map((seg, i) => (
+                  <React.Fragment key={i}>
+                    <span style={s.breadcrumbSep}>/</span>
+                    <button
+                      onClick={() => { navigateTo(breadcrumbs.slice(0, i + 1).join('/')); }}
+                      style={{ ...s.breadcrumbBtn, ...(i === breadcrumbs.length - 1 ? { color: '#e2e8f0', fontWeight: 600 } : {}) }}
+                    >
+                      {seg}
+                    </button>
+                  </React.Fragment>
+                ))}
               </div>
-            ))}
-          </div>
-        )}
-
-        {/* Drag overlay */}
-        {dragOver && (
-          <div style={s.dragOverlay}>
-            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#6366f1" strokeWidth="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" /></svg>
-            <div style={{ fontSize: '18px', fontWeight: 600, color: '#a5b4fc' }}>Drop files to upload</div>
-          </div>
-        )}
-
-        {error && <div style={s.errorMsg}>{error}</div>}
-
-        {/* Content */}
-        {loading ? (
-          <div style={s.emptyMsg}>Loading...</div>
-        ) : displayItems.length === 0 ? (
-          <div style={s.emptyState}>
-            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.15)" strokeWidth="1.5">
-              <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z" />
-            </svg>
-            <div style={{ fontSize: '15px', color: 'rgba(255,255,255,0.35)', marginTop: '12px' }}>
-              {searchResults ? 'No results found.' : 'This folder is empty.'}
-            </div>
-            <div style={{ fontSize: '13px', color: 'rgba(255,255,255,0.2)', marginTop: '4px' }}>
-              Drag files here or click Upload
-            </div>
-          </div>
-        ) : viewMode === 'grid' ? (
-          <div style={s.fileGrid}>
-            {displayItems.map((item, i) => (
-              <button
-                key={i}
-                onClick={() => item.type === 'directory' ? navigateTo(item.path) : setSelectedFile(item)}
-                onContextMenu={(e) => handleContextMenu(e, item)}
-                style={s.fileCard}
-              >
-                <FileIcon type={item.type === 'directory' ? 'folder' : getFileIcon(item.extension)} />
-                {renaming?.path === item.path ? (
-                  <input
-                    autoFocus
-                    value={renameValue}
-                    onChange={e => setRenameValue(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Enter') submitRename(); if (e.key === 'Escape') setRenaming(null); }}
-                    onBlur={submitRename}
-                    onClick={e => e.stopPropagation()}
-                    style={s.renameInput}
-                  />
-                ) : (
-                  <div style={s.fileName}>{item.name}</div>
-                )}
-                <div style={s.fileMeta}>
-                  {item.type === 'directory' ? 'Folder' : formatBytes(item.size)}
-                  {item.modified ? ` · ${formatDate(item.modified)}` : ''}
+              <div style={s.headerRight}>
+                <div style={s.statusDot}>
+                  <span style={{ ...s.dot, background: nasStatus === null ? '#f59e0b' : nasStatus ? '#22c55e' : '#ef4444' }} />
+                  <span style={s.statusText}>
+                    {nasStatus === null ? 'Checking...' : nasStatus ? 'Connected' : 'Offline'}
+                  </span>
                 </div>
-              </button>
-            ))}
-          </div>
-        ) : (
-          <div style={s.fileList}>
-            <div style={s.listHeader}>
-              <span style={{ width: '28px' }} />
-              <span style={{ ...s.listHeaderCell, flex: 1 }}>Name</span>
-              <span style={{ ...s.listHeaderCell, width: '80px', textAlign: 'right' }}>Size</span>
-              <span style={{ ...s.listHeaderCell, width: '120px', textAlign: 'right' }}>Modified</span>
+              </div>
             </div>
-            {displayItems.map((item, i) => (
-              <button
-                key={i}
-                onClick={() => item.type === 'directory' ? navigateTo(item.path) : setSelectedFile(item)}
-                onContextMenu={(e) => handleContextMenu(e, item)}
-                style={s.fileListRow}
-              >
-                <FileIcon type={item.type === 'directory' ? 'folder' : getFileIcon(item.extension)} />
-                {renaming?.path === item.path ? (
-                  <input
-                    autoFocus
-                    value={renameValue}
-                    onChange={e => setRenameValue(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Enter') submitRename(); if (e.key === 'Escape') setRenaming(null); }}
-                    onBlur={submitRename}
-                    onClick={e => e.stopPropagation()}
-                    style={{ ...s.renameInput, flex: 1 }}
-                  />
-                ) : (
-                  <span style={s.fileListName}>{item.name}</span>
-                )}
-                <span style={s.fileListSize}>{item.type === 'directory' ? '—' : formatBytes(item.size)}</span>
-                <span style={s.fileListDate}>{formatDate(item.modified)}</span>
+
+            {/* Toolbar */}
+            <div style={s.toolbar}>
+              <form onSubmit={handleSearch} style={s.searchForm}>
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="rgba(255,255,255,0.3)" strokeWidth="2" style={{ flexShrink: 0 }}>
+                  <circle cx="7" cy="7" r="5" /><path d="M11 11l3 3" />
+                </svg>
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  placeholder="Search files..."
+                  style={s.searchInput}
+                />
+                {searchResults && <button type="button" onClick={clearSearch} style={s.clearSearchBtn}>Clear</button>}
+              </form>
+              <button onClick={() => setCreatingFolder(true)} style={s.actionBtn} title="New folder">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M3 3h4l1.5 1.5H13a1 1 0 011 1V12a1 1 0 01-1 1H3a1 1 0 01-1-1V4a1 1 0 011-1z" /><path d="M8 7v4M6 9h4" /></svg>
               </button>
-            ))}
-          </div>
+              <button onClick={() => fileInputRef.current?.click()} style={s.uploadBtn}>
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M8 12V3M4 7l4-4 4 4" /><path d="M2 13h12" /></svg>
+                Upload
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                style={{ display: 'none' }}
+                onChange={e => { if (e.target.files.length) handleUploadFiles(e.target.files); e.target.value = ''; }}
+              />
+              <div style={s.viewControls}>
+                <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={s.sortSelect}>
+                  <option value="name">Name</option>
+                  <option value="size">Size</option>
+                  <option value="modified">Modified</option>
+                </select>
+                <button onClick={() => setSortOrder(o => o === 'asc' ? 'desc' : 'asc')} style={s.iconBtn}>
+                  {sortOrder === 'asc' ? '\u2191' : '\u2193'}
+                </button>
+                <button onClick={() => setViewMode(v => v === 'grid' ? 'list' : 'grid')} style={s.iconBtn}>
+                  {viewMode === 'grid' ? (
+                    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="1" width="6" height="6" rx="1" /><rect x="9" y="1" width="6" height="6" rx="1" /><rect x="1" y="9" width="6" height="6" rx="1" /><rect x="9" y="9" width="6" height="6" rx="1" /></svg>
+                  ) : (
+                    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="2" width="14" height="3" rx="1" /><rect x="1" y="7" width="14" height="3" rx="1" /><rect x="1" y="12" width="14" height="3" rx="1" /></svg>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* New folder input */}
+            {creatingFolder && (
+              <div style={s.newFolderRow}>
+                <FileIcon type="folder" />
+                <input
+                  autoFocus
+                  value={newFolderName}
+                  onChange={e => setNewFolderName(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') handleNewFolder(); if (e.key === 'Escape') { setCreatingFolder(false); setNewFolderName(''); } }}
+                  onBlur={handleNewFolder}
+                  placeholder="Folder name..."
+                  style={s.renameInput}
+                />
+              </div>
+            )}
+
+            {/* Upload progress */}
+            {uploads.length > 0 && (
+              <div style={s.uploadsBar}>
+                {uploads.map(u => (
+                  <div key={u.id} style={s.uploadItem}>
+                    <span style={s.uploadName}>{u.name}</span>
+                    <span style={{ ...s.uploadStatus, color: u.status === 'error' ? '#fca5a5' : u.status === 'done' ? '#86efac' : '#a5b4fc' }}>
+                      {u.status === 'uploading' ? 'Uploading...' : u.status === 'done' ? 'Done' : u.error || 'Error'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Drag overlay */}
+            {dragOver && (
+              <div style={s.dragOverlay}>
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#6366f1" strokeWidth="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" /></svg>
+                <div style={{ fontSize: '18px', fontWeight: 600, color: '#a5b4fc' }}>Drop files to upload</div>
+              </div>
+            )}
+
+            {error && <div style={s.errorMsg}>{error}</div>}
+
+            {/* Content */}
+            {loading ? (
+              <div style={s.emptyMsg}>Loading...</div>
+            ) : displayItems.length === 0 ? (
+              <div style={s.emptyState}>
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.15)" strokeWidth="1.5">
+                  <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z" />
+                </svg>
+                <div style={{ fontSize: '15px', color: 'rgba(255,255,255,0.35)', marginTop: '12px' }}>
+                  {searchResults ? 'No results found.' : 'This folder is empty.'}
+                </div>
+                <div style={{ fontSize: '13px', color: 'rgba(255,255,255,0.2)', marginTop: '4px' }}>
+                  Drag files here or click Upload
+                </div>
+              </div>
+            ) : viewMode === 'grid' ? (
+              <div style={s.fileGrid}>
+                {displayItems.map((item, i) => (
+                  <button
+                    key={i}
+                    onClick={() => item.type === 'directory' ? navigateTo(item.path) : setSelectedFile(item)}
+                    onContextMenu={(e) => handleContextMenu(e, item)}
+                    style={s.fileCard}
+                  >
+                    <FileIcon type={item.type === 'directory' ? 'folder' : getFileIcon(item.extension)} />
+                    {renaming?.path === item.path ? (
+                      <input
+                        autoFocus
+                        value={renameValue}
+                        onChange={e => setRenameValue(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') submitRename(); if (e.key === 'Escape') setRenaming(null); }}
+                        onBlur={submitRename}
+                        onClick={e => e.stopPropagation()}
+                        style={s.renameInput}
+                      />
+                    ) : (
+                      <div style={s.fileName}>{item.name}</div>
+                    )}
+                    <div style={s.fileMeta}>
+                      {item.type === 'directory' ? 'Folder' : formatBytes(item.size)}
+                      {item.modified ? ` · ${formatDate(item.modified)}` : ''}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div style={s.fileList}>
+                <div style={s.listHeader}>
+                  <span style={{ width: '28px' }} />
+                  <span style={{ ...s.listHeaderCell, flex: 1 }}>Name</span>
+                  <span style={{ ...s.listHeaderCell, width: '80px', textAlign: 'right' }}>Size</span>
+                  <span style={{ ...s.listHeaderCell, width: '120px', textAlign: 'right' }}>Modified</span>
+                </div>
+                {displayItems.map((item, i) => (
+                  <button
+                    key={i}
+                    onClick={() => item.type === 'directory' ? navigateTo(item.path) : setSelectedFile(item)}
+                    onContextMenu={(e) => handleContextMenu(e, item)}
+                    style={s.fileListRow}
+                  >
+                    <FileIcon type={item.type === 'directory' ? 'folder' : getFileIcon(item.extension)} />
+                    {renaming?.path === item.path ? (
+                      <input
+                        autoFocus
+                        value={renameValue}
+                        onChange={e => setRenameValue(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') submitRename(); if (e.key === 'Escape') setRenaming(null); }}
+                        onBlur={submitRename}
+                        onClick={e => e.stopPropagation()}
+                        style={{ ...s.renameInput, flex: 1 }}
+                      />
+                    ) : (
+                      <span style={s.fileListName}>{item.name}</span>
+                    )}
+                    <span style={s.fileListSize}>{item.type === 'directory' ? '—' : formatBytes(item.size)}</span>
+                    <span style={s.fileListDate}>{formatDate(item.modified)}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* Context menu */}
+            {contextMenu && (
+              <div style={{ ...s.contextMenu, left: contextMenu.x, top: contextMenu.y }}>
+                {contextMenu.item.type === 'file' && (
+                  <button style={s.contextMenuItem} onClick={() => handleDownload(contextMenu.item.path)}>Download</button>
+                )}
+                <button style={s.contextMenuItem} onClick={() => openCreateShare(contextMenu.item.path, contextMenu.item.type)}>Share</button>
+                <button style={s.contextMenuItem} onClick={() => startRename(contextMenu.item)}>Rename</button>
+                <button style={{ ...s.contextMenuItem, color: '#fca5a5' }} onClick={() => handleDelete(contextMenu.item)}>Delete</button>
+              </div>
+            )}
+          </>
         )}
 
-        {/* Context menu */}
-        {contextMenu && (
-          <div style={{ ...s.contextMenu, left: contextMenu.x, top: contextMenu.y }}>
-            {contextMenu.item.type === 'file' && (
-              <button style={s.contextMenuItem} onClick={() => handleDownload(contextMenu.item.path)}>Download</button>
-            )}
-            <button style={s.contextMenuItem} onClick={() => startRename(contextMenu.item)}>Rename</button>
-            <button style={{ ...s.contextMenuItem, color: '#fca5a5' }} onClick={() => handleDelete(contextMenu.item)}>Delete</button>
-          </div>
+        {/* ═══ Shared Links View ═══ */}
+        {activeView === 'shared' && (
+          <SharedLinksView
+            links={shareLinks}
+            loading={shareLinksLoading}
+            onRevoke={revokeShareLink}
+            onCopy={copyShareUrl}
+            copiedLink={copiedLink}
+          />
+        )}
+
+        {/* ═══ Trash View ═══ */}
+        {activeView === 'trash' && (
+          <TrashView
+            items={trashItems}
+            loading={trashLoading}
+            onRestore={restoreTrashItem}
+            onDelete={permanentDeleteTrashItem}
+            onEmpty={emptyTrash}
+          />
         )}
       </div>
+
+      {/* ═══ Create Share Dialog ═══ */}
+      {showCreateShare && (
+        <div style={s.dialogOverlay} onClick={() => { setShowCreateShare(null); setCreatedShareLink(null); }}>
+          <div style={s.dialogCard} onClick={e => e.stopPropagation()}>
+            <div style={s.dialogTitle}>Create Share Link</div>
+            <div style={s.dialogSubtitle}>/{showCreateShare.path}</div>
+
+            {!createdShareLink ? (
+              <>
+                <div style={s.dialogField}>
+                  <label style={s.dialogLabel}>Mode</label>
+                  <select value={shareMode} onChange={e => setShareMode(e.target.value)} style={s.dialogSelect}>
+                    <option value="upload">Upload only</option>
+                    <option value="download">Download only</option>
+                    <option value="both">Upload & Download</option>
+                  </select>
+                </div>
+                <div style={s.dialogField}>
+                  <label style={s.dialogLabel}>Expires (optional)</label>
+                  <input
+                    type="datetime-local"
+                    value={shareExpiry}
+                    onChange={e => setShareExpiry(e.target.value)}
+                    style={s.dialogInput}
+                  />
+                </div>
+                <div style={s.dialogField}>
+                  <label style={s.dialogLabel}>Max uses (optional)</label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={shareMaxUses}
+                    onChange={e => setShareMaxUses(e.target.value)}
+                    placeholder="Unlimited"
+                    style={s.dialogInput}
+                  />
+                </div>
+                <div style={s.dialogActions}>
+                  <button onClick={() => { setShowCreateShare(null); setCreatedShareLink(null); }} style={s.dialogCancelBtn}>Cancel</button>
+                  <button onClick={createShareLink} style={s.dialogConfirmBtn}>Create Link</button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div style={{ ...s.dialogField, marginTop: '8px' }}>
+                  <label style={s.dialogLabel}>Share URL</label>
+                  <div style={s.linkCopyRow}>
+                    <input
+                      readOnly
+                      value={createdShareLink}
+                      style={s.linkCopyInput}
+                      onFocus={e => e.target.select()}
+                    />
+                    <button onClick={() => copyShareUrl(createdShareLink)} style={s.linkCopyBtn}>
+                      {copiedLink === createdShareLink ? 'Copied!' : 'Copy'}
+                    </button>
+                  </div>
+                </div>
+                <div style={s.dialogActions}>
+                  <button onClick={() => { setShowCreateShare(null); setCreatedShareLink(null); }} style={s.dialogConfirmBtn}>Done</button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Shared Links View ───
+function SharedLinksView({ links, loading, onRevoke, onCopy, copiedLink }) {
+  const WEB = process.env.REACT_APP_WEB_URL || window.location.origin;
+  return (
+    <div>
+      <div style={s.header}>
+        <h1 style={s.title}>Shared Links</h1>
+      </div>
+      {loading ? (
+        <div style={s.emptyMsg}>Loading...</div>
+      ) : links.length === 0 ? (
+        <div style={s.emptyState}>
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.15)" strokeWidth="1.5">
+            <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71" />
+            <path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71" />
+          </svg>
+          <div style={{ fontSize: '15px', color: 'rgba(255,255,255,0.35)', marginTop: '12px' }}>
+            No share links yet.
+          </div>
+          <div style={{ fontSize: '13px', color: 'rgba(255,255,255,0.2)', marginTop: '4px' }}>
+            Right-click a file or folder and select "Share" to create one.
+          </div>
+        </div>
+      ) : (
+        <div style={s.fileList}>
+          <div style={s.listHeader}>
+            <span style={{ ...s.listHeaderCell, flex: 1 }}>Path</span>
+            <span style={{ ...s.listHeaderCell, width: '80px' }}>Mode</span>
+            <span style={{ ...s.listHeaderCell, width: '70px', textAlign: 'right' }}>Uses</span>
+            <span style={{ ...s.listHeaderCell, width: '100px', textAlign: 'right' }}>Expires</span>
+            <span style={{ ...s.listHeaderCell, width: '120px', textAlign: 'right' }}>Actions</span>
+          </div>
+          {links.map(link => {
+            const url = `${WEB}/drop/${link.token}`;
+            return (
+              <div key={link.id} style={s.fileListRow}>
+                <span style={s.fileListName}>/{link.target_path}</span>
+                <span style={{ width: '80px', fontSize: '12px', color: 'rgba(255,255,255,0.5)' }}>
+                  {link.mode}
+                </span>
+                <span style={{ width: '70px', fontSize: '12px', color: 'rgba(255,255,255,0.4)', textAlign: 'right' }}>
+                  {link.used_count}{link.max_uses ? `/${link.max_uses}` : ''}
+                </span>
+                <span style={s.fileListDate}>
+                  {link.expires_at ? formatDate(link.expires_at) : 'Never'}
+                </span>
+                <span style={{ width: '120px', display: 'flex', gap: '6px', justifyContent: 'flex-end' }}>
+                  <button onClick={() => onCopy(url)} style={s.smallBtn}>
+                    {copiedLink === url ? 'Copied!' : 'Copy'}
+                  </button>
+                  <button onClick={() => onRevoke(link.id)} style={{ ...s.smallBtn, color: '#fca5a5', borderColor: 'rgba(252,165,165,0.2)' }}>
+                    Revoke
+                  </button>
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Trash View ───
+function TrashView({ items, loading, onRestore, onDelete, onEmpty }) {
+  return (
+    <div>
+      <div style={s.header}>
+        <h1 style={s.title}>Trash</h1>
+        <div style={s.headerRight}>
+          {items.length > 0 && (
+            <button onClick={onEmpty} style={{ ...s.smallBtn, color: '#fca5a5', borderColor: 'rgba(252,165,165,0.2)' }}>
+              Empty Trash
+            </button>
+          )}
+        </div>
+      </div>
+      {loading ? (
+        <div style={s.emptyMsg}>Loading...</div>
+      ) : items.length === 0 ? (
+        <div style={s.emptyState}>
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.15)" strokeWidth="1.5">
+            <polyline points="3 6 5 6 21 6" />
+            <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" />
+            <path d="M10 11v6M14 11v6M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2" />
+          </svg>
+          <div style={{ fontSize: '15px', color: 'rgba(255,255,255,0.35)', marginTop: '12px' }}>
+            Trash is empty.
+          </div>
+        </div>
+      ) : (
+        <div style={s.fileList}>
+          <div style={s.listHeader}>
+            <span style={{ width: '28px' }} />
+            <span style={{ ...s.listHeaderCell, flex: 1 }}>Name</span>
+            <span style={{ ...s.listHeaderCell, width: '80px', textAlign: 'right' }}>Size</span>
+            <span style={{ ...s.listHeaderCell, width: '120px', textAlign: 'right' }}>Deleted</span>
+            <span style={{ ...s.listHeaderCell, width: '130px', textAlign: 'right' }}>Actions</span>
+          </div>
+          {items.map(item => (
+            <div key={item.trashName} style={s.fileListRow}>
+              <FileIcon type={item.type === 'directory' ? 'folder' : getFileIcon(item.extension)} />
+              <span style={s.fileListName}>{item.originalName}</span>
+              <span style={s.fileListSize}>{item.type === 'directory' ? '—' : formatBytes(item.size)}</span>
+              <span style={s.fileListDate}>{formatDate(item.deletedAt)}</span>
+              <span style={{ width: '130px', display: 'flex', gap: '6px', justifyContent: 'flex-end' }}>
+                <button onClick={() => onRestore(item.trashName)} style={s.smallBtn}>Restore</button>
+                <button onClick={() => onDelete(item.trashName)} style={{ ...s.smallBtn, color: '#fca5a5', borderColor: 'rgba(252,165,165,0.2)' }}>Delete</button>
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
 // ─── Sidebar ───
-function Sidebar({ user, signOut }) {
+function Sidebar({ user, signOut, activeView, onNavigate }) {
   const navItems = [
-    { label: 'My Files', icon: 'M3 3h7l2 2h6a1 1 0 011 1v10a1 1 0 01-1 1H3a1 1 0 01-1-1V4a1 1 0 011-1z', active: true },
-    { label: 'Shared', icon: 'M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4-4v2M9 7a4 4 0 100-8 4 4 0 000 8zM23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75', disabled: true },
-    { label: 'Recent', icon: 'M12 2a10 10 0 100 20 10 10 0 000-20zM12 6v6l4 2', disabled: true },
+    { key: 'files', label: 'My Files', icon: 'M3 3h7l2 2h6a1 1 0 011 1v10a1 1 0 01-1 1H3a1 1 0 01-1-1V4a1 1 0 011-1z' },
+    { key: 'shared', label: 'Shared Links', icon: 'M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71' },
+    { key: 'trash', label: 'Trash', icon: 'M3 6h18M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6M10 11v6M14 11v6M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2' },
   ];
 
   return (
@@ -543,9 +909,9 @@ function Sidebar({ user, signOut }) {
       <nav style={s.sidebarNav}>
         {navItems.map(item => (
           <button
-            key={item.label}
-            style={{ ...s.sidebarItem, ...(item.active ? s.sidebarItemActive : {}), ...(item.disabled ? { opacity: 0.35, cursor: 'default' } : {}) }}
-            disabled={item.disabled}
+            key={item.key}
+            onClick={() => onNavigate(item.key)}
+            style={{ ...s.sidebarItem, ...(activeView === item.key ? s.sidebarItemActive : {}) }}
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d={item.icon} />
@@ -839,6 +1205,17 @@ const s = {
     display: 'flex',
     alignItems: 'center',
   },
+  smallBtn: {
+    padding: '4px 10px',
+    border: '1px solid rgba(255,255,255,0.1)',
+    borderRadius: '6px',
+    background: 'transparent',
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: '11px',
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+    whiteSpace: 'nowrap',
+  },
   // Upload bar
   uploadsBar: {
     marginBottom: '12px',
@@ -1070,6 +1447,127 @@ const s = {
     fontWeight: 600,
     cursor: 'pointer',
     fontFamily: 'inherit',
+  },
+  // Dialog
+  dialogOverlay: {
+    position: 'fixed',
+    inset: 0,
+    background: 'rgba(0,0,0,0.6)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 200,
+  },
+  dialogCard: {
+    width: '100%',
+    maxWidth: '420px',
+    background: '#1e1e2e',
+    border: '1px solid rgba(255,255,255,0.1)',
+    borderRadius: '14px',
+    padding: '28px',
+    boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
+  },
+  dialogTitle: {
+    fontSize: '18px',
+    fontWeight: 700,
+    color: '#e2e8f0',
+    marginBottom: '4px',
+  },
+  dialogSubtitle: {
+    fontSize: '13px',
+    color: 'rgba(255,255,255,0.35)',
+    marginBottom: '20px',
+    wordBreak: 'break-all',
+  },
+  dialogField: {
+    marginBottom: '16px',
+  },
+  dialogLabel: {
+    display: 'block',
+    fontSize: '12px',
+    fontWeight: 600,
+    color: 'rgba(255,255,255,0.5)',
+    marginBottom: '6px',
+    textTransform: 'uppercase',
+    letterSpacing: '0.5px',
+  },
+  dialogSelect: {
+    width: '100%',
+    padding: '9px 12px',
+    border: '1px solid rgba(255,255,255,0.1)',
+    borderRadius: '8px',
+    background: 'rgba(255,255,255,0.04)',
+    color: '#e2e8f0',
+    fontSize: '13px',
+    fontFamily: 'inherit',
+    outline: 'none',
+  },
+  dialogInput: {
+    width: '100%',
+    padding: '9px 12px',
+    border: '1px solid rgba(255,255,255,0.1)',
+    borderRadius: '8px',
+    background: 'rgba(255,255,255,0.04)',
+    color: '#e2e8f0',
+    fontSize: '13px',
+    fontFamily: 'inherit',
+    outline: 'none',
+    boxSizing: 'border-box',
+  },
+  dialogActions: {
+    display: 'flex',
+    justifyContent: 'flex-end',
+    gap: '8px',
+    marginTop: '20px',
+  },
+  dialogCancelBtn: {
+    padding: '9px 18px',
+    border: '1px solid rgba(255,255,255,0.1)',
+    borderRadius: '8px',
+    background: 'transparent',
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: '13px',
+    fontWeight: 500,
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+  },
+  dialogConfirmBtn: {
+    padding: '9px 18px',
+    border: 'none',
+    borderRadius: '8px',
+    background: '#6366f1',
+    color: '#fff',
+    fontSize: '13px',
+    fontWeight: 600,
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+  },
+  linkCopyRow: {
+    display: 'flex',
+    gap: '8px',
+  },
+  linkCopyInput: {
+    flex: 1,
+    padding: '9px 12px',
+    border: '1px solid rgba(255,255,255,0.1)',
+    borderRadius: '8px',
+    background: 'rgba(255,255,255,0.04)',
+    color: '#e2e8f0',
+    fontSize: '12px',
+    fontFamily: 'inherit',
+    outline: 'none',
+  },
+  linkCopyBtn: {
+    padding: '9px 16px',
+    border: 'none',
+    borderRadius: '8px',
+    background: '#6366f1',
+    color: '#fff',
+    fontSize: '12px',
+    fontWeight: 600,
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+    whiteSpace: 'nowrap',
   },
   // States
   errorMsg: {
