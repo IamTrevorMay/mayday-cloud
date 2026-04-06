@@ -1,0 +1,7 @@
+{
+  "buildCommand": "npm run build",
+  "outputDirectory": "build",
+  "rewrites": [
+    { "source": "/((?!static|favicon|manifest|logo|robots).*)", "destination": "/index.html" }
+  ]
+}
