@@ -1,0 +1,21 @@
+{
+  "name": "mayday-cloud-web",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "start": "craco start",
+    "build": "craco build"
+  },
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^6.21.0",
+    "react-scripts": "5.0.1",
+    "@craco/craco": "^7.1.0",
+    "@supabase/supabase-js": "^2.39.0"
+  },
+  "browserslist": {
+    "production": [">0.2%", "not dead", "not op_mini all"],
+    "development": ["last 1 chrome version", "last 1 firefox version", "last 1 safari version"]
+  }
+}

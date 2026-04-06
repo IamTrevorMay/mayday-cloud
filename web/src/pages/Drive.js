@@ -1,0 +1,1097 @@
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useAuth } from '../contexts/AuthContext';
+import { authedFetch } from '../lib/supabase';
+
+const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp'];
+const VIDEO_EXTENSIONS = ['mp4', 'mov', 'avi', 'mkv', 'webm'];
+const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:4000';
+
+function formatBytes(bytes) {
+  if (!bytes || bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return `${(bytes / Math.pow(k, i)).toFixed(i > 0 ? 1 : 0)} ${sizes[i]}`;
+}
+
+function formatDate(dateStr) {
+  if (!dateStr) return '—';
+  return new Date(dateStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function getFileIcon(extension) {
+  const ext = (extension || '').toLowerCase();
+  if (VIDEO_EXTENSIONS.includes(ext)) return 'video';
+  if (['mp3', 'wav', 'flac', 'aac', 'ogg', 'm4a'].includes(ext)) return 'audio';
+  if (IMAGE_EXTENSIONS.includes(ext)) return 'image';
+  if (['psd', 'ai', 'prproj', 'aep', 'drp', 'fcpx'].includes(ext)) return 'project';
+  if (['pdf', 'doc', 'docx', 'txt', 'md'].includes(ext)) return 'doc';
+  if (['zip', 'rar', '7z', 'tar', 'gz'].includes(ext)) return 'archive';
+  return 'file';
+}
+
+export default function Drive() {
+  const { user, signOut } = useAuth();
+  const [nasStatus, setNasStatus] = useState(null);
+  const [currentPath, setCurrentPath] = useState('');
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState(null);
+  const [sortBy, setSortBy] = useState('name');
+  const [sortOrder, setSortOrder] = useState('asc');
+  const [viewMode, setViewMode] = useState('list');
+  const [error, setError] = useState(null);
+
+  // Upload state
+  const [uploads, setUploads] = useState([]); // [{name, progress, status}]
+  const [dragOver, setDragOver] = useState(false);
+  const fileInputRef = useRef(null);
+
+  // Context menu
+  const [contextMenu, setContextMenu] = useState(null); // {x, y, item}
+
+  // Rename
+  const [renaming, setRenaming] = useState(null); // item being renamed
+  const [renameValue, setRenameValue] = useState('');
+
+  // New folder
+  const [creatingFolder, setCreatingFolder] = useState(false);
+  const [newFolderName, setNewFolderName] = useState('');
+
+  // Health check
+  const checkHealth = useCallback(async () => {
+    setNasStatus(null);
+    try {
+      const data = await authedFetch('/api/nas/health');
+      setNasStatus(data.connected === true);
+    } catch {
+      setNasStatus(false);
+    }
+  }, []);
+
+  useEffect(() => { checkHealth(); }, [checkHealth]);
+
+  // Fetch listing
+  const fetchListing = useCallback(async (dirPath) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const params = new URLSearchParams({ path: dirPath || '', sort: sortBy, order: sortOrder });
+      const data = await authedFetch(`/api/nas/list?${params}`);
+      setItems(data.items || []);
+    } catch (err) {
+      setError(err.message);
+      setItems([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [sortBy, sortOrder]);
+
+  useEffect(() => { fetchListing(currentPath); }, [currentPath, fetchListing]);
+
+  // Search
+  async function handleSearch(e) {
+    e.preventDefault();
+    if (!searchQuery.trim()) { setSearchResults(null); return; }
+    setLoading(true);
+    setError(null);
+    try {
+      const params = new URLSearchParams({ q: searchQuery, dataset: currentPath.split('/')[0] || '' });
+      const data = await authedFetch(`/api/nas/search?${params}`);
+      setSearchResults(data.results || []);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function clearSearch() {
+    setSearchQuery('');
+    setSearchResults(null);
+  }
+
+  function navigateTo(itemPath) {
+    setSelectedFile(null);
+    clearSearch();
+    setCurrentPath(itemPath);
+  }
+
+  function goBack() {
+    const parts = currentPath.split('/').filter(Boolean);
+    if (parts.length <= 1) setCurrentPath('');
+    else { parts.pop(); setCurrentPath(parts.join('/')); }
+    setSelectedFile(null);
+    clearSearch();
+  }
+
+  function getBreadcrumbs() {
+    if (!currentPath) return [];
+    return currentPath.split('/').filter(Boolean);
+  }
+
+  // ─── Upload ───
+  async function handleUploadFiles(files) {
+    const fileList = Array.from(files);
+    for (const file of fileList) {
+      const id = Date.now() + '_' + file.name;
+      setUploads(prev => [...prev, { id, name: file.name, progress: 0, status: 'uploading' }]);
+
+      try {
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('path', currentPath);
+
+        await authedFetch('/api/nas/upload', { method: 'POST', body: formData });
+        setUploads(prev => prev.map(u => u.id === id ? { ...u, progress: 100, status: 'done' } : u));
+      } catch (err) {
+        setUploads(prev => prev.map(u => u.id === id ? { ...u, status: 'error', error: err.message } : u));
+      }
+    }
+    // Refresh listing
+    fetchListing(currentPath);
+    // Clear completed uploads after 3s
+    setTimeout(() => setUploads(prev => prev.filter(u => u.status !== 'done')), 3000);
+  }
+
+  function handleDrop(e) {
+    e.preventDefault();
+    setDragOver(false);
+    if (e.dataTransfer.files.length) handleUploadFiles(e.dataTransfer.files);
+  }
+
+  function handleDragOver(e) { e.preventDefault(); setDragOver(true); }
+  function handleDragLeave() { setDragOver(false); }
+
+  // ─── Context menu actions ───
+  function handleContextMenu(e, item) {
+    e.preventDefault();
+    setContextMenu({ x: e.clientX, y: e.clientY, item });
+  }
+
+  useEffect(() => {
+    function close() { setContextMenu(null); }
+    window.addEventListener('click', close);
+    return () => window.removeEventListener('click', close);
+  }, []);
+
+  async function handleDelete(item) {
+    if (!window.confirm(`Move "${item.name}" to trash?`)) return;
+    try {
+      await authedFetch('/api/nas/delete', {
+        method: 'DELETE',
+        body: JSON.stringify({ path: item.path }),
+      });
+      fetchListing(currentPath);
+    } catch (err) {
+      alert('Delete failed: ' + err.message);
+    }
+  }
+
+  function startRename(item) {
+    setRenaming(item);
+    setRenameValue(item.name);
+  }
+
+  async function submitRename() {
+    if (!renaming || !renameValue.trim() || renameValue === renaming.name) {
+      setRenaming(null);
+      return;
+    }
+    try {
+      await authedFetch('/api/nas/rename', {
+        method: 'POST',
+        body: JSON.stringify({ path: renaming.path, newName: renameValue }),
+      });
+      setRenaming(null);
+      fetchListing(currentPath);
+    } catch (err) {
+      alert('Rename failed: ' + err.message);
+    }
+  }
+
+  async function handleNewFolder() {
+    if (!newFolderName.trim()) { setCreatingFolder(false); return; }
+    try {
+      const folderPath = currentPath ? `${currentPath}/${newFolderName}` : newFolderName;
+      await authedFetch('/api/nas/mkdir', {
+        method: 'POST',
+        body: JSON.stringify({ path: folderPath }),
+      });
+      setCreatingFolder(false);
+      setNewFolderName('');
+      fetchListing(currentPath);
+    } catch (err) {
+      alert('Create folder failed: ' + err.message);
+    }
+  }
+
+  async function handleDownload(filePath) {
+    // Build authed download URL
+    const { supabase } = await import('../lib/supabase');
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) return;
+    const url = `${API_URL}/api/nas/download?path=${encodeURIComponent(filePath)}&token=${session.access_token}`;
+    window.open(url, '_blank');
+  }
+
+  // ─── File Detail View ───
+  if (selectedFile) {
+    const isImage = IMAGE_EXTENSIONS.includes((selectedFile.extension || '').toLowerCase());
+    const isVideo = VIDEO_EXTENSIONS.includes((selectedFile.extension || '').toLowerCase());
+
+    return (
+      <div style={s.layout}>
+        <Sidebar user={user} signOut={signOut} />
+        <div style={s.main}>
+          <div style={s.header}>
+            <button onClick={() => setSelectedFile(null)} style={s.backBtn}>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10 2L4 8l6 6" /></svg>
+              Back
+            </button>
+            <h1 style={s.title}>{selectedFile.name}</h1>
+          </div>
+          <div style={s.detailCard}>
+            {isImage && (
+              <div style={s.previewArea}>
+                <img
+                  src={`${API_URL}/api/nas/download?path=${encodeURIComponent(selectedFile.path)}`}
+                  alt={selectedFile.name}
+                  style={s.previewImg}
+                  onError={(e) => { e.target.style.display = 'none'; }}
+                />
+              </div>
+            )}
+            {isVideo && (
+              <div style={s.previewArea}>
+                <video
+                  src={`${API_URL}/api/nas/download?path=${encodeURIComponent(selectedFile.path)}`}
+                  controls
+                  style={{ maxWidth: '100%', maxHeight: '400px', borderRadius: '8px' }}
+                />
+              </div>
+            )}
+            <div style={s.detailMeta}>
+              <div style={s.detailRow}><span style={s.detailLabel}>Name</span><span>{selectedFile.name}</span></div>
+              <div style={s.detailRow}><span style={s.detailLabel}>Path</span><span style={{ opacity: 0.6, fontSize: '13px' }}>/{selectedFile.path}</span></div>
+              <div style={s.detailRow}><span style={s.detailLabel}>Size</span><span>{formatBytes(selectedFile.size)}</span></div>
+              <div style={s.detailRow}><span style={s.detailLabel}>Modified</span><span>{formatDate(selectedFile.modified)}</span></div>
+              {selectedFile.extension && (
+                <div style={s.detailRow}><span style={s.detailLabel}>Type</span><span>.{selectedFile.extension.toUpperCase()}</span></div>
+              )}
+            </div>
+            <button onClick={() => handleDownload(selectedFile.path)} style={s.downloadBtn}>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M8 2v9M4 8l4 4 4-4M2 13h12" /></svg>
+              Download File
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ─── Main Layout ───
+  const breadcrumbs = getBreadcrumbs();
+  const displayItems = searchResults || items;
+
+  return (
+    <div style={s.layout}>
+      <Sidebar user={user} signOut={signOut} />
+      <div
+        style={{ ...s.main, ...(dragOver ? { background: 'rgba(99,102,241,0.05)' } : {}) }}
+        onDrop={handleDrop}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+      >
+        {/* Header */}
+        <div style={s.header}>
+          {currentPath && (
+            <button onClick={goBack} style={s.backBtn}>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10 2L4 8l6 6" /></svg>
+            </button>
+          )}
+          <div style={s.breadcrumbs}>
+            <button onClick={() => { setCurrentPath(''); clearSearch(); }} style={{ ...s.breadcrumbBtn, ...(breadcrumbs.length === 0 ? { color: '#e2e8f0', fontWeight: 600 } : {}) }}>
+              My Files
+            </button>
+            {breadcrumbs.map((seg, i) => (
+              <React.Fragment key={i}>
+                <span style={s.breadcrumbSep}>/</span>
+                <button
+                  onClick={() => { navigateTo(breadcrumbs.slice(0, i + 1).join('/')); }}
+                  style={{ ...s.breadcrumbBtn, ...(i === breadcrumbs.length - 1 ? { color: '#e2e8f0', fontWeight: 600 } : {}) }}
+                >
+                  {seg}
+                </button>
+              </React.Fragment>
+            ))}
+          </div>
+          <div style={s.headerRight}>
+            <div style={s.statusDot}>
+              <span style={{ ...s.dot, background: nasStatus === null ? '#f59e0b' : nasStatus ? '#22c55e' : '#ef4444' }} />
+              <span style={s.statusText}>
+                {nasStatus === null ? 'Checking...' : nasStatus ? 'Connected' : 'Offline'}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Toolbar */}
+        <div style={s.toolbar}>
+          <form onSubmit={handleSearch} style={s.searchForm}>
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="rgba(255,255,255,0.3)" strokeWidth="2" style={{ flexShrink: 0 }}>
+              <circle cx="7" cy="7" r="5" /><path d="M11 11l3 3" />
+            </svg>
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              placeholder="Search files..."
+              style={s.searchInput}
+            />
+            {searchResults && <button type="button" onClick={clearSearch} style={s.clearSearchBtn}>Clear</button>}
+          </form>
+          <button onClick={() => setCreatingFolder(true)} style={s.actionBtn} title="New folder">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M3 3h4l1.5 1.5H13a1 1 0 011 1V12a1 1 0 01-1 1H3a1 1 0 01-1-1V4a1 1 0 011-1z" /><path d="M8 7v4M6 9h4" /></svg>
+          </button>
+          <button onClick={() => fileInputRef.current?.click()} style={s.uploadBtn}>
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M8 12V3M4 7l4-4 4 4" /><path d="M2 13h12" /></svg>
+            Upload
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            style={{ display: 'none' }}
+            onChange={e => { if (e.target.files.length) handleUploadFiles(e.target.files); e.target.value = ''; }}
+          />
+          <div style={s.viewControls}>
+            <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={s.sortSelect}>
+              <option value="name">Name</option>
+              <option value="size">Size</option>
+              <option value="modified">Modified</option>
+            </select>
+            <button onClick={() => setSortOrder(o => o === 'asc' ? 'desc' : 'asc')} style={s.iconBtn}>
+              {sortOrder === 'asc' ? '\u2191' : '\u2193'}
+            </button>
+            <button onClick={() => setViewMode(v => v === 'grid' ? 'list' : 'grid')} style={s.iconBtn}>
+              {viewMode === 'grid' ? (
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="1" width="6" height="6" rx="1" /><rect x="9" y="1" width="6" height="6" rx="1" /><rect x="1" y="9" width="6" height="6" rx="1" /><rect x="9" y="9" width="6" height="6" rx="1" /></svg>
+              ) : (
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="2" width="14" height="3" rx="1" /><rect x="1" y="7" width="14" height="3" rx="1" /><rect x="1" y="12" width="14" height="3" rx="1" /></svg>
+              )}
+            </button>
+          </div>
+        </div>
+
+        {/* New folder input */}
+        {creatingFolder && (
+          <div style={s.newFolderRow}>
+            <FileIcon type="folder" />
+            <input
+              autoFocus
+              value={newFolderName}
+              onChange={e => setNewFolderName(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') handleNewFolder(); if (e.key === 'Escape') { setCreatingFolder(false); setNewFolderName(''); } }}
+              onBlur={handleNewFolder}
+              placeholder="Folder name..."
+              style={s.renameInput}
+            />
+          </div>
+        )}
+
+        {/* Upload progress */}
+        {uploads.length > 0 && (
+          <div style={s.uploadsBar}>
+            {uploads.map(u => (
+              <div key={u.id} style={s.uploadItem}>
+                <span style={s.uploadName}>{u.name}</span>
+                <span style={{ ...s.uploadStatus, color: u.status === 'error' ? '#fca5a5' : u.status === 'done' ? '#86efac' : '#a5b4fc' }}>
+                  {u.status === 'uploading' ? 'Uploading...' : u.status === 'done' ? 'Done' : u.error || 'Error'}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Drag overlay */}
+        {dragOver && (
+          <div style={s.dragOverlay}>
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#6366f1" strokeWidth="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" /></svg>
+            <div style={{ fontSize: '18px', fontWeight: 600, color: '#a5b4fc' }}>Drop files to upload</div>
+          </div>
+        )}
+
+        {error && <div style={s.errorMsg}>{error}</div>}
+
+        {/* Content */}
+        {loading ? (
+          <div style={s.emptyMsg}>Loading...</div>
+        ) : displayItems.length === 0 ? (
+          <div style={s.emptyState}>
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.15)" strokeWidth="1.5">
+              <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z" />
+            </svg>
+            <div style={{ fontSize: '15px', color: 'rgba(255,255,255,0.35)', marginTop: '12px' }}>
+              {searchResults ? 'No results found.' : 'This folder is empty.'}
+            </div>
+            <div style={{ fontSize: '13px', color: 'rgba(255,255,255,0.2)', marginTop: '4px' }}>
+              Drag files here or click Upload
+            </div>
+          </div>
+        ) : viewMode === 'grid' ? (
+          <div style={s.fileGrid}>
+            {displayItems.map((item, i) => (
+              <button
+                key={i}
+                onClick={() => item.type === 'directory' ? navigateTo(item.path) : setSelectedFile(item)}
+                onContextMenu={(e) => handleContextMenu(e, item)}
+                style={s.fileCard}
+              >
+                <FileIcon type={item.type === 'directory' ? 'folder' : getFileIcon(item.extension)} />
+                {renaming?.path === item.path ? (
+                  <input
+                    autoFocus
+                    value={renameValue}
+                    onChange={e => setRenameValue(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') submitRename(); if (e.key === 'Escape') setRenaming(null); }}
+                    onBlur={submitRename}
+                    onClick={e => e.stopPropagation()}
+                    style={s.renameInput}
+                  />
+                ) : (
+                  <div style={s.fileName}>{item.name}</div>
+                )}
+                <div style={s.fileMeta}>
+                  {item.type === 'directory' ? 'Folder' : formatBytes(item.size)}
+                  {item.modified ? ` · ${formatDate(item.modified)}` : ''}
+                </div>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div style={s.fileList}>
+            <div style={s.listHeader}>
+              <span style={{ width: '28px' }} />
+              <span style={{ ...s.listHeaderCell, flex: 1 }}>Name</span>
+              <span style={{ ...s.listHeaderCell, width: '80px', textAlign: 'right' }}>Size</span>
+              <span style={{ ...s.listHeaderCell, width: '120px', textAlign: 'right' }}>Modified</span>
+            </div>
+            {displayItems.map((item, i) => (
+              <button
+                key={i}
+                onClick={() => item.type === 'directory' ? navigateTo(item.path) : setSelectedFile(item)}
+                onContextMenu={(e) => handleContextMenu(e, item)}
+                style={s.fileListRow}
+              >
+                <FileIcon type={item.type === 'directory' ? 'folder' : getFileIcon(item.extension)} />
+                {renaming?.path === item.path ? (
+                  <input
+                    autoFocus
+                    value={renameValue}
+                    onChange={e => setRenameValue(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') submitRename(); if (e.key === 'Escape') setRenaming(null); }}
+                    onBlur={submitRename}
+                    onClick={e => e.stopPropagation()}
+                    style={{ ...s.renameInput, flex: 1 }}
+                  />
+                ) : (
+                  <span style={s.fileListName}>{item.name}</span>
+                )}
+                <span style={s.fileListSize}>{item.type === 'directory' ? '—' : formatBytes(item.size)}</span>
+                <span style={s.fileListDate}>{formatDate(item.modified)}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Context menu */}
+        {contextMenu && (
+          <div style={{ ...s.contextMenu, left: contextMenu.x, top: contextMenu.y }}>
+            {contextMenu.item.type === 'file' && (
+              <button style={s.contextMenuItem} onClick={() => handleDownload(contextMenu.item.path)}>Download</button>
+            )}
+            <button style={s.contextMenuItem} onClick={() => startRename(contextMenu.item)}>Rename</button>
+            <button style={{ ...s.contextMenuItem, color: '#fca5a5' }} onClick={() => handleDelete(contextMenu.item)}>Delete</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Sidebar ───
+function Sidebar({ user, signOut }) {
+  const navItems = [
+    { label: 'My Files', icon: 'M3 3h7l2 2h6a1 1 0 011 1v10a1 1 0 01-1 1H3a1 1 0 01-1-1V4a1 1 0 011-1z', active: true },
+    { label: 'Shared', icon: 'M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4-4v2M9 7a4 4 0 100-8 4 4 0 000 8zM23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75', disabled: true },
+    { label: 'Recent', icon: 'M12 2a10 10 0 100 20 10 10 0 000-20zM12 6v6l4 2', disabled: true },
+  ];
+
+  return (
+    <div style={s.sidebar}>
+      <div style={s.sidebarLogo}>
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6366f1" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+          <polyline points="17 8 12 3 7 8" />
+          <line x1="12" y1="3" x2="12" y2="15" />
+        </svg>
+        <span style={{ fontSize: '15px', fontWeight: 700, color: '#e2e8f0' }}>Mayday Cloud</span>
+      </div>
+      <nav style={s.sidebarNav}>
+        {navItems.map(item => (
+          <button
+            key={item.label}
+            style={{ ...s.sidebarItem, ...(item.active ? s.sidebarItemActive : {}), ...(item.disabled ? { opacity: 0.35, cursor: 'default' } : {}) }}
+            disabled={item.disabled}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d={item.icon} />
+            </svg>
+            {item.label}
+          </button>
+        ))}
+      </nav>
+      <div style={s.sidebarFooter}>
+        <div style={s.userInfo}>
+          <div style={s.userAvatar}>{(user?.email || '?')[0].toUpperCase()}</div>
+          <span style={s.userEmail}>{user?.email}</span>
+        </div>
+        <button onClick={signOut} style={s.signOutBtn}>Sign out</button>
+      </div>
+    </div>
+  );
+}
+
+// ─── FileIcon ───
+function FileIcon({ type }) {
+  const colors = { folder: '#f59e0b', video: '#6366f1', audio: '#8b5cf6', image: '#ec4899', project: '#22c55e', doc: '#3b82f6', archive: '#64748b', file: '#94a3b8' };
+  const paths = {
+    folder: 'M4 4h5l2 2h5a1 1 0 011 1v8a1 1 0 01-1 1H4a1 1 0 01-1-1V5a1 1 0 011-1z',
+    video: 'M4 4h10a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V6a2 2 0 012-2zM8 8l4 2.5L8 13V8z',
+    audio: 'M9 2v14M5 6v8M1 9v2M13 6v8M17 9v2',
+    image: 'M2 4h14a2 2 0 012 2v8a2 2 0 01-2 2H2V6a2 2 0 012-2zM5 10a1.5 1.5 0 100-3 1.5 1.5 0 000 3z',
+    doc: 'M4 2h8l4 4v10a2 2 0 01-2 2H4a2 2 0 01-2-2V4a2 2 0 012-2zM12 2v4h4M6 9h6M6 12h4',
+    archive: 'M4 2h10a2 2 0 012 2v12a2 2 0 01-2 2H4a2 2 0 01-2-2V4a2 2 0 012-2zM8 6v4M6 8h4',
+    file: 'M4 2h8l4 4v10a2 2 0 01-2 2H4a2 2 0 01-2-2V4a2 2 0 012-2zM12 2v4h4',
+    project: 'M4 4h5l2 2h5a1 1 0 011 1v8a1 1 0 01-1 1H4a1 1 0 01-1-1V5a1 1 0 011-1z',
+  };
+  return (
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke={colors[type] || colors.file} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+      <path d={paths[type] || paths.file} />
+    </svg>
+  );
+}
+
+// ─── Styles ───
+const s = {
+  layout: {
+    display: 'flex',
+    minHeight: '100vh',
+  },
+  // Sidebar
+  sidebar: {
+    width: '240px',
+    borderRight: '1px solid rgba(255,255,255,0.06)',
+    background: 'rgba(255,255,255,0.02)',
+    display: 'flex',
+    flexDirection: 'column',
+    padding: '16px 0',
+    flexShrink: 0,
+  },
+  sidebarLogo: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    padding: '8px 20px 20px',
+  },
+  sidebarNav: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '2px',
+    padding: '0 8px',
+  },
+  sidebarItem: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    padding: '10px 12px',
+    border: 'none',
+    borderRadius: '8px',
+    background: 'transparent',
+    color: 'rgba(255,255,255,0.5)',
+    fontSize: '14px',
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+    textAlign: 'left',
+    width: '100%',
+  },
+  sidebarItemActive: {
+    background: 'rgba(99,102,241,0.1)',
+    color: '#a5b4fc',
+  },
+  sidebarFooter: {
+    marginTop: 'auto',
+    padding: '16px 16px 8px',
+    borderTop: '1px solid rgba(255,255,255,0.06)',
+  },
+  userInfo: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    marginBottom: '8px',
+  },
+  userAvatar: {
+    width: '28px',
+    height: '28px',
+    borderRadius: '50%',
+    background: '#6366f1',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: '13px',
+    fontWeight: 600,
+    color: '#fff',
+    flexShrink: 0,
+  },
+  userEmail: {
+    fontSize: '12px',
+    color: 'rgba(255,255,255,0.4)',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  },
+  signOutBtn: {
+    padding: '6px 12px',
+    border: '1px solid rgba(255,255,255,0.08)',
+    borderRadius: '6px',
+    background: 'transparent',
+    color: 'rgba(255,255,255,0.4)',
+    fontSize: '12px',
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+    width: '100%',
+  },
+  // Main content
+  main: {
+    flex: 1,
+    padding: '24px 32px',
+    position: 'relative',
+    overflow: 'auto',
+  },
+  header: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '12px',
+    marginBottom: '8px',
+  },
+  headerRight: {
+    marginLeft: 'auto',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '12px',
+  },
+  title: {
+    fontSize: '20px',
+    fontWeight: 700,
+    color: '#e2e8f0',
+    margin: 0,
+  },
+  backBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '4px',
+    padding: '6px 10px',
+    border: '1px solid rgba(255,255,255,0.1)',
+    borderRadius: '8px',
+    background: 'transparent',
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: '13px',
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+    flexShrink: 0,
+  },
+  breadcrumbs: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '4px',
+    overflow: 'hidden',
+  },
+  breadcrumbBtn: {
+    padding: '2px 4px',
+    border: 'none',
+    background: 'transparent',
+    color: 'rgba(255,255,255,0.45)',
+    fontSize: '15px',
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+    whiteSpace: 'nowrap',
+  },
+  breadcrumbSep: {
+    color: 'rgba(255,255,255,0.2)',
+    fontSize: '14px',
+  },
+  statusDot: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+  },
+  dot: {
+    width: '7px',
+    height: '7px',
+    borderRadius: '50%',
+    display: 'inline-block',
+  },
+  statusText: {
+    fontSize: '12px',
+    color: 'rgba(255,255,255,0.4)',
+  },
+  // Toolbar
+  toolbar: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    marginBottom: '16px',
+    marginTop: '8px',
+  },
+  searchForm: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    flex: 1,
+    padding: '0 12px',
+    border: '1px solid rgba(255,255,255,0.08)',
+    borderRadius: '8px',
+    background: 'rgba(255,255,255,0.03)',
+  },
+  searchInput: {
+    flex: 1,
+    padding: '9px 0',
+    border: 'none',
+    background: 'transparent',
+    color: '#e2e8f0',
+    fontSize: '13px',
+    fontFamily: 'inherit',
+    outline: 'none',
+  },
+  clearSearchBtn: {
+    padding: '4px 10px',
+    border: '1px solid rgba(255,255,255,0.1)',
+    borderRadius: '6px',
+    background: 'transparent',
+    color: 'rgba(255,255,255,0.5)',
+    fontSize: '11px',
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+  },
+  actionBtn: {
+    padding: '8px 10px',
+    border: '1px solid rgba(255,255,255,0.08)',
+    borderRadius: '8px',
+    background: 'transparent',
+    color: 'rgba(255,255,255,0.5)',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+  },
+  uploadBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    padding: '8px 14px',
+    border: 'none',
+    borderRadius: '8px',
+    background: '#6366f1',
+    color: '#fff',
+    fontSize: '13px',
+    fontWeight: 600,
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+    flexShrink: 0,
+  },
+  viewControls: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '4px',
+  },
+  sortSelect: {
+    padding: '8px 8px',
+    border: '1px solid rgba(255,255,255,0.08)',
+    borderRadius: '8px',
+    background: 'rgba(255,255,255,0.03)',
+    color: '#e2e8f0',
+    fontSize: '12px',
+    fontFamily: 'inherit',
+    outline: 'none',
+    cursor: 'pointer',
+  },
+  iconBtn: {
+    padding: '8px 8px',
+    border: '1px solid rgba(255,255,255,0.08)',
+    borderRadius: '8px',
+    background: 'transparent',
+    color: 'rgba(255,255,255,0.5)',
+    fontSize: '13px',
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+    display: 'flex',
+    alignItems: 'center',
+  },
+  // Upload bar
+  uploadsBar: {
+    marginBottom: '12px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '4px',
+  },
+  uploadItem: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: '8px 14px',
+    borderRadius: '8px',
+    background: 'rgba(99,102,241,0.08)',
+    border: '1px solid rgba(99,102,241,0.15)',
+    fontSize: '13px',
+  },
+  uploadName: {
+    color: '#e2e8f0',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    maxWidth: '300px',
+  },
+  uploadStatus: {
+    fontSize: '12px',
+    fontWeight: 500,
+    flexShrink: 0,
+  },
+  // Drag overlay
+  dragOverlay: {
+    position: 'absolute',
+    inset: 0,
+    background: 'rgba(15,15,26,0.85)',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '12px',
+    zIndex: 10,
+    borderRadius: '12px',
+    border: '2px dashed rgba(99,102,241,0.4)',
+  },
+  // New folder
+  newFolderRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    padding: '8px 14px',
+    marginBottom: '8px',
+    borderRadius: '8px',
+    background: 'rgba(255,255,255,0.03)',
+    border: '1px solid rgba(99,102,241,0.2)',
+  },
+  renameInput: {
+    padding: '4px 8px',
+    border: '1px solid rgba(99,102,241,0.3)',
+    borderRadius: '6px',
+    background: 'rgba(0,0,0,0.3)',
+    color: '#e2e8f0',
+    fontSize: '13px',
+    fontFamily: 'inherit',
+    outline: 'none',
+  },
+  // File grid
+  fileGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))',
+    gap: '10px',
+  },
+  fileCard: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: '8px',
+    padding: '18px 12px',
+    border: '1px solid rgba(255,255,255,0.05)',
+    borderRadius: '10px',
+    background: 'rgba(255,255,255,0.02)',
+    color: '#e2e8f0',
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+    textAlign: 'center',
+    transition: 'all 0.12s',
+  },
+  fileName: {
+    fontSize: '13px',
+    fontWeight: 500,
+    wordBreak: 'break-word',
+    lineHeight: 1.3,
+  },
+  fileMeta: {
+    fontSize: '11px',
+    color: 'rgba(255,255,255,0.3)',
+  },
+  // File list
+  fileList: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '1px',
+  },
+  listHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '12px',
+    padding: '6px 14px',
+    fontSize: '11px',
+    color: 'rgba(255,255,255,0.3)',
+    textTransform: 'uppercase',
+    letterSpacing: '0.5px',
+    fontWeight: 600,
+    borderBottom: '1px solid rgba(255,255,255,0.06)',
+    marginBottom: '4px',
+  },
+  listHeaderCell: {},
+  fileListRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '12px',
+    padding: '9px 14px',
+    border: 'none',
+    borderRadius: '6px',
+    background: 'transparent',
+    color: '#e2e8f0',
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+    textAlign: 'left',
+    width: '100%',
+    transition: 'background 0.1s',
+  },
+  fileListName: {
+    flex: 1,
+    fontSize: '13px',
+    fontWeight: 500,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  },
+  fileListSize: {
+    fontSize: '12px',
+    color: 'rgba(255,255,255,0.35)',
+    width: '80px',
+    textAlign: 'right',
+  },
+  fileListDate: {
+    fontSize: '12px',
+    color: 'rgba(255,255,255,0.3)',
+    width: '120px',
+    textAlign: 'right',
+  },
+  // Context menu
+  contextMenu: {
+    position: 'fixed',
+    zIndex: 100,
+    background: '#1e1e2e',
+    border: '1px solid rgba(255,255,255,0.1)',
+    borderRadius: '10px',
+    padding: '4px',
+    minWidth: '140px',
+    boxShadow: '0 8px 30px rgba(0,0,0,0.5)',
+  },
+  contextMenuItem: {
+    display: 'block',
+    width: '100%',
+    padding: '8px 14px',
+    border: 'none',
+    borderRadius: '6px',
+    background: 'transparent',
+    color: '#e2e8f0',
+    fontSize: '13px',
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+    textAlign: 'left',
+  },
+  // Detail view
+  detailCard: {
+    border: '1px solid rgba(255,255,255,0.08)',
+    borderRadius: '14px',
+    background: 'rgba(255,255,255,0.03)',
+    padding: '24px',
+    marginTop: '16px',
+  },
+  previewArea: {
+    display: 'flex',
+    justifyContent: 'center',
+    marginBottom: '20px',
+    background: 'rgba(0,0,0,0.3)',
+    borderRadius: '10px',
+    padding: '16px',
+  },
+  previewImg: {
+    maxWidth: '100%',
+    maxHeight: '400px',
+    borderRadius: '8px',
+    objectFit: 'contain',
+  },
+  detailMeta: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '12px',
+    marginBottom: '20px',
+  },
+  detailRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '12px',
+    fontSize: '14px',
+    color: '#e2e8f0',
+  },
+  detailLabel: {
+    width: '80px',
+    fontSize: '12px',
+    fontWeight: 600,
+    color: 'rgba(255,255,255,0.45)',
+    textTransform: 'uppercase',
+    letterSpacing: '0.5px',
+    flexShrink: 0,
+  },
+  downloadBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    padding: '10px 20px',
+    border: 'none',
+    borderRadius: '10px',
+    background: '#6366f1',
+    color: '#fff',
+    fontSize: '14px',
+    fontWeight: 600,
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+  },
+  // States
+  errorMsg: {
+    padding: '12px 16px',
+    borderRadius: '10px',
+    background: 'rgba(239,68,68,0.1)',
+    border: '1px solid rgba(239,68,68,0.2)',
+    color: '#fca5a5',
+    fontSize: '13px',
+    marginBottom: '16px',
+  },
+  emptyMsg: {
+    color: 'rgba(255,255,255,0.4)',
+    fontSize: '14px',
+    textAlign: 'center',
+    padding: '48px 0',
+  },
+  emptyState: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: '80px 0',
+  },
+};
