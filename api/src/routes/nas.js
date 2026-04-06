@@ -4,8 +4,17 @@ const path = require('path');
 const fs = require('fs');
 const fsp = fs.promises;
 const multer = require('multer');
+const { execFile } = require('child_process');
+const { promisify } = require('util');
+const { createClient } = require('@supabase/supabase-js');
 
 const { getMimeType } = require('../utils/mime');
+
+const execFileAsync = promisify(execFile);
+
+function getSupabase() {
+  return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
+}
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 500 * 1024 * 1024 } });
 
@@ -165,6 +174,31 @@ router.post('/rename', async (req, res) => {
     if (!fullNew.startsWith(ASSETS_ROOT)) return res.status(400).json({ error: 'Path traversal blocked' });
     await fsp.rename(fullOld, fullNew);
     res.json({ success: true, path: path.relative(ASSETS_ROOT, fullNew) });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// POST /api/nas/move
+router.post('/move', async (req, res) => {
+  try {
+    const { path: itemPath, destination } = req.body;
+    if (!itemPath || destination === undefined) return res.status(400).json({ error: 'path and destination required' });
+    const fullSrc = sanitizePath(itemPath, ASSETS_ROOT);
+    const fullDest = sanitizePath(destination, ASSETS_ROOT);
+
+    // Confirm destination is a directory
+    const destStat = await fsp.stat(fullDest);
+    if (!destStat.isDirectory()) return res.status(400).json({ error: 'Destination is not a directory' });
+
+    // Block moving a folder into its own subtree
+    const fullTarget = path.join(fullDest, path.basename(fullSrc));
+    if (fullTarget.startsWith(fullSrc + path.sep) || fullTarget === fullSrc) {
+      return res.status(400).json({ error: 'Cannot move a folder into itself' });
+    }
+
+    await fsp.rename(fullSrc, fullTarget);
+    res.json({ success: true, path: path.relative(ASSETS_ROOT, fullTarget) });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -334,6 +368,112 @@ router.delete('/trash/empty', async (req, res) => {
     res.json({ success: true, deleted: entries.length });
   } catch (err) {
     res.status(400).json({ error: err.message });
+  }
+});
+
+// ─── Favorites ───
+
+// GET /api/nas/favorites — list user's favorites with file stat info
+router.get('/favorites', async (req, res) => {
+  try {
+    const sb = getSupabase();
+    const { data, error } = await sb
+      .from('favorites')
+      .select('*')
+      .eq('user_id', req.user.id)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+
+    const items = await Promise.all((data || []).map(async (fav) => {
+      try {
+        const fullPath = sanitizePath(fav.file_path, ASSETS_ROOT);
+        const stat = await fsp.stat(fullPath);
+        const isDir = stat.isDirectory();
+        return {
+          id: fav.id,
+          file_path: fav.file_path,
+          name: path.basename(fav.file_path),
+          type: isDir ? 'directory' : 'file',
+          size: stat.size,
+          modified: stat.mtime.toISOString(),
+          extension: isDir ? null : path.extname(fav.file_path).toLowerCase().slice(1) || null,
+          created_at: fav.created_at,
+          missing: false,
+        };
+      } catch {
+        return {
+          id: fav.id,
+          file_path: fav.file_path,
+          name: path.basename(fav.file_path),
+          type: 'file',
+          size: 0,
+          modified: null,
+          extension: path.extname(fav.file_path).toLowerCase().slice(1) || null,
+          created_at: fav.created_at,
+          missing: true,
+        };
+      }
+    }));
+
+    res.json(items);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// POST /api/nas/favorites — add a favorite
+router.post('/favorites', async (req, res) => {
+  try {
+    const { file_path } = req.body;
+    if (!file_path) return res.status(400).json({ error: 'file_path required' });
+    const sb = getSupabase();
+    const { data, error } = await sb
+      .from('favorites')
+      .upsert({ user_id: req.user.id, file_path }, { onConflict: 'user_id,file_path' })
+      .select()
+      .single();
+    if (error) throw error;
+    res.json(data);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// DELETE /api/nas/favorites — remove a favorite
+router.delete('/favorites', async (req, res) => {
+  try {
+    const { file_path } = req.body;
+    if (!file_path) return res.status(400).json({ error: 'file_path required' });
+    const sb = getSupabase();
+    const { error } = await sb
+      .from('favorites')
+      .delete()
+      .eq('user_id', req.user.id)
+      .eq('file_path', file_path);
+    if (error) throw error;
+    res.json({ success: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ─── Storage ───
+
+// GET /api/nas/storage — disk usage for ASSETS_ROOT
+router.get('/storage', async (req, res) => {
+  try {
+    const { stdout } = await execFileAsync('df', ['-k', ASSETS_ROOT]);
+    const lines = stdout.trim().split('\n');
+    if (lines.length < 2) throw new Error('Unexpected df output');
+    const parts = lines[1].split(/\s+/);
+    // df -k columns: Filesystem 1K-blocks Used Available Use% Mounted
+    const total = parseInt(parts[1], 10) * 1024;
+    const used = parseInt(parts[2], 10) * 1024;
+    const available = parseInt(parts[3], 10) * 1024;
+    const percent = parseInt(parts[4], 10);
+    res.json({ total, used, available, percent });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 

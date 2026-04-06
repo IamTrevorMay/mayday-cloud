@@ -70,7 +70,7 @@ export default function Drive() {
   // Share links state
   const [shareLinks, setShareLinks] = useState([]);
   const [shareLinksLoading, setShareLinksLoading] = useState(false);
-  const [showCreateShare, setShowCreateShare] = useState(null); // null or { path, type }
+  const [showCreateShare, setShowCreateShare] = useState(null);
   const [shareMode, setShareMode] = useState('upload');
   const [shareExpiry, setShareExpiry] = useState('');
   const [shareMaxUses, setShareMaxUses] = useState('');
@@ -80,6 +80,25 @@ export default function Drive() {
   // Trash state
   const [trashItems, setTrashItems] = useState([]);
   const [trashLoading, setTrashLoading] = useState(false);
+
+  // ─── Multi-select state ───
+  const [selectedItems, setSelectedItems] = useState(new Set());
+  const [lastClickedIndex, setLastClickedIndex] = useState(null);
+
+  // ─── Move dialog state ───
+  const [showMoveDialog, setShowMoveDialog] = useState(false);
+  const [moveItemPaths, setMoveItemPaths] = useState([]);
+  const [moveFolders, setMoveFolders] = useState([]);
+  const [movePath, setMovePath] = useState('');
+  const [moveLoading, setMoveLoading] = useState(false);
+
+  // ─── Favorites state ───
+  const [favorites, setFavorites] = useState(new Set());
+  const [favoriteItems, setFavoriteItems] = useState([]);
+  const [favoritesLoading, setFavoritesLoading] = useState(false);
+
+  // ─── Settings state ───
+  const [storageInfo, setStorageInfo] = useState(null);
 
   // Health check
   const checkHealth = useCallback(async () => {
@@ -229,6 +248,167 @@ export default function Drive() {
     }
   }
 
+  // ─── Favorites API ───
+  const fetchFavoritePaths = useCallback(async () => {
+    try {
+      const data = await authedFetch('/api/nas/favorites');
+      setFavorites(new Set((data || []).map(f => f.file_path)));
+    } catch {
+      setFavorites(new Set());
+    }
+  }, []);
+
+  useEffect(() => { fetchFavoritePaths(); }, [fetchFavoritePaths]);
+
+  const fetchFavoriteItems = useCallback(async () => {
+    setFavoritesLoading(true);
+    try {
+      const data = await authedFetch('/api/nas/favorites');
+      setFavoriteItems(data || []);
+      setFavorites(new Set((data || []).map(f => f.file_path)));
+    } catch {
+      setFavoriteItems([]);
+    } finally {
+      setFavoritesLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeView === 'favorites') fetchFavoriteItems();
+  }, [activeView, fetchFavoriteItems]);
+
+  async function toggleFavorite(filePath) {
+    const isFav = favorites.has(filePath);
+    // Optimistic update
+    setFavorites(prev => {
+      const next = new Set(prev);
+      if (isFav) next.delete(filePath); else next.add(filePath);
+      return next;
+    });
+    try {
+      if (isFav) {
+        await authedFetch('/api/nas/favorites', { method: 'DELETE', body: JSON.stringify({ file_path: filePath }) });
+      } else {
+        await authedFetch('/api/nas/favorites', { method: 'POST', body: JSON.stringify({ file_path: filePath }) });
+      }
+    } catch {
+      // Revert on error
+      setFavorites(prev => {
+        const next = new Set(prev);
+        if (isFav) next.add(filePath); else next.delete(filePath);
+        return next;
+      });
+    }
+  }
+
+  // ─── Storage API ───
+  async function fetchStorage() {
+    try {
+      const data = await authedFetch('/api/nas/storage');
+      setStorageInfo(data);
+    } catch {
+      setStorageInfo(null);
+    }
+  }
+
+  useEffect(() => {
+    if (activeView === 'settings') fetchStorage();
+  }, [activeView]);
+
+  // ─── Multi-select logic ───
+  function toggleSelect(item, index, e) {
+    const displayList = searchResults || items;
+    setSelectedItems(prev => {
+      const next = new Set(prev);
+      if (e.shiftKey && lastClickedIndex !== null) {
+        const start = Math.min(lastClickedIndex, index);
+        const end = Math.max(lastClickedIndex, index);
+        for (let i = start; i <= end; i++) {
+          next.add(displayList[i].path);
+        }
+      } else if (e.metaKey || e.ctrlKey) {
+        if (next.has(item.path)) next.delete(item.path); else next.add(item.path);
+      } else {
+        if (next.has(item.path) && next.size === 1) next.delete(item.path); else {
+          next.clear();
+          next.add(item.path);
+        }
+      }
+      return next;
+    });
+    setLastClickedIndex(index);
+  }
+
+  function selectAll() {
+    const displayList = searchResults || items;
+    if (selectedItems.size === displayList.length) {
+      setSelectedItems(new Set());
+    } else {
+      setSelectedItems(new Set(displayList.map(it => it.path)));
+    }
+  }
+
+  function clearSelection() {
+    setSelectedItems(new Set());
+    setLastClickedIndex(null);
+  }
+
+  // ─── Move dialog logic ───
+  function openMoveDialog(paths) {
+    setMoveItemPaths(paths);
+    setMovePath('');
+    setShowMoveDialog(true);
+    fetchMoveFolders('');
+  }
+
+  async function fetchMoveFolders(dirPath) {
+    try {
+      const params = new URLSearchParams({ path: dirPath || '' });
+      const data = await authedFetch(`/api/nas/list?${params}`);
+      setMoveFolders((data.items || []).filter(i => i.type === 'directory'));
+      setMovePath(dirPath);
+    } catch {
+      setMoveFolders([]);
+    }
+  }
+
+  async function executeMove() {
+    setMoveLoading(true);
+    try {
+      for (const itemPath of moveItemPaths) {
+        await authedFetch('/api/nas/move', {
+          method: 'POST',
+          body: JSON.stringify({ path: itemPath, destination: movePath || '' }),
+        });
+      }
+      setShowMoveDialog(false);
+      clearSelection();
+      fetchListing(currentPath);
+    } catch (err) {
+      alert('Move failed: ' + err.message);
+    } finally {
+      setMoveLoading(false);
+    }
+  }
+
+  // ─── Bulk operations ───
+  async function handleBulkDelete() {
+    const count = selectedItems.size;
+    if (!window.confirm(`Move ${count} item${count > 1 ? 's' : ''} to trash?`)) return;
+    try {
+      for (const itemPath of selectedItems) {
+        await authedFetch('/api/nas/delete', {
+          method: 'DELETE',
+          body: JSON.stringify({ path: itemPath }),
+        });
+      }
+      clearSelection();
+      fetchListing(currentPath);
+    } catch (err) {
+      alert('Delete failed: ' + err.message);
+    }
+  }
+
   // Search
   async function handleSearch(e) {
     e.preventDefault();
@@ -254,6 +434,7 @@ export default function Drive() {
   function navigateTo(itemPath) {
     setSelectedFile(null);
     clearSearch();
+    clearSelection();
     setCurrentPath(itemPath);
   }
 
@@ -263,6 +444,7 @@ export default function Drive() {
     else { parts.pop(); setCurrentPath(parts.join('/')); }
     setSelectedFile(null);
     clearSearch();
+    clearSelection();
   }
 
   function getBreadcrumbs() {
@@ -274,6 +456,7 @@ export default function Drive() {
     setActiveView(view);
     setSelectedFile(null);
     clearSearch();
+    clearSelection();
   }
 
   // ─── Upload ───
@@ -398,7 +581,7 @@ export default function Drive() {
 
     return (
       <div style={s.layout}>
-        <Sidebar user={user} signOut={signOut} activeView={activeView} onNavigate={handleNavigate} />
+        <Sidebar user={user} activeView={activeView} onNavigate={handleNavigate} />
         <div style={s.main}>
           <div style={s.header}>
             <button onClick={() => setSelectedFile(null)} style={s.backBtn}>
@@ -449,10 +632,11 @@ export default function Drive() {
   // ─── Main Layout ───
   const breadcrumbs = getBreadcrumbs();
   const displayItems = searchResults || items;
+  const hasSelection = selectedItems.size > 0;
 
   return (
     <div style={s.layout}>
-      <Sidebar user={user} signOut={signOut} activeView={activeView} onNavigate={handleNavigate} />
+      <Sidebar user={user} activeView={activeView} onNavigate={handleNavigate} />
       <div
         style={{ ...s.main, ...(dragOver && activeView === 'files' ? { background: 'rgba(99,102,241,0.05)' } : {}) }}
         onDrop={activeView === 'files' ? handleDrop : undefined}
@@ -470,7 +654,7 @@ export default function Drive() {
                 </button>
               )}
               <div style={s.breadcrumbs}>
-                <button onClick={() => { setCurrentPath(''); clearSearch(); }} style={{ ...s.breadcrumbBtn, ...(breadcrumbs.length === 0 ? { color: '#e2e8f0', fontWeight: 600 } : {}) }}>
+                <button onClick={() => { setCurrentPath(''); clearSearch(); clearSelection(); }} style={{ ...s.breadcrumbBtn, ...(breadcrumbs.length === 0 ? { color: '#e2e8f0', fontWeight: 600 } : {}) }}>
                   My Files
                 </button>
                 {breadcrumbs.map((seg, i) => (
@@ -495,53 +679,62 @@ export default function Drive() {
               </div>
             </div>
 
-            {/* Toolbar */}
-            <div style={s.toolbar}>
-              <form onSubmit={handleSearch} style={s.searchForm}>
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="rgba(255,255,255,0.3)" strokeWidth="2" style={{ flexShrink: 0 }}>
-                  <circle cx="7" cy="7" r="5" /><path d="M11 11l3 3" />
-                </svg>
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={e => setSearchQuery(e.target.value)}
-                  placeholder="Search files..."
-                  style={s.searchInput}
-                />
-                {searchResults && <button type="button" onClick={clearSearch} style={s.clearSearchBtn}>Clear</button>}
-              </form>
-              <button onClick={() => setCreatingFolder(true)} style={s.actionBtn} title="New folder">
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M3 3h4l1.5 1.5H13a1 1 0 011 1V12a1 1 0 01-1 1H3a1 1 0 01-1-1V4a1 1 0 011-1z" /><path d="M8 7v4M6 9h4" /></svg>
-              </button>
-              <button onClick={() => fileInputRef.current?.click()} style={s.uploadBtn}>
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M8 12V3M4 7l4-4 4 4" /><path d="M2 13h12" /></svg>
-                Upload
-              </button>
-              <input
-                ref={fileInputRef}
-                type="file"
-                multiple
-                style={{ display: 'none' }}
-                onChange={e => { if (e.target.files.length) handleUploadFiles(e.target.files); e.target.value = ''; }}
-              />
-              <div style={s.viewControls}>
-                <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={s.sortSelect}>
-                  <option value="name">Name</option>
-                  <option value="size">Size</option>
-                  <option value="modified">Modified</option>
-                </select>
-                <button onClick={() => setSortOrder(o => o === 'asc' ? 'desc' : 'asc')} style={s.iconBtn}>
-                  {sortOrder === 'asc' ? '\u2191' : '\u2193'}
-                </button>
-                <button onClick={() => setViewMode(v => v === 'grid' ? 'list' : 'grid')} style={s.iconBtn}>
-                  {viewMode === 'grid' ? (
-                    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="1" width="6" height="6" rx="1" /><rect x="9" y="1" width="6" height="6" rx="1" /><rect x="1" y="9" width="6" height="6" rx="1" /><rect x="9" y="9" width="6" height="6" rx="1" /></svg>
-                  ) : (
-                    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="2" width="14" height="3" rx="1" /><rect x="1" y="7" width="14" height="3" rx="1" /><rect x="1" y="12" width="14" height="3" rx="1" /></svg>
-                  )}
-                </button>
+            {/* Toolbar — selection or normal */}
+            {hasSelection ? (
+              <div style={s.selectionToolbar}>
+                <span style={s.selectionCount}>{selectedItems.size} selected</span>
+                <button onClick={clearSelection} style={s.smallBtn}>Clear</button>
+                <button onClick={() => openMoveDialog(Array.from(selectedItems))} style={s.smallBtn}>Move to...</button>
+                <button onClick={handleBulkDelete} style={{ ...s.smallBtn, color: '#fca5a5', borderColor: 'rgba(252,165,165,0.2)' }}>Delete</button>
               </div>
-            </div>
+            ) : (
+              <div style={s.toolbar}>
+                <form onSubmit={handleSearch} style={s.searchForm}>
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="rgba(255,255,255,0.3)" strokeWidth="2" style={{ flexShrink: 0 }}>
+                    <circle cx="7" cy="7" r="5" /><path d="M11 11l3 3" />
+                  </svg>
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={e => setSearchQuery(e.target.value)}
+                    placeholder="Search files..."
+                    style={s.searchInput}
+                  />
+                  {searchResults && <button type="button" onClick={clearSearch} style={s.clearSearchBtn}>Clear</button>}
+                </form>
+                <button onClick={() => setCreatingFolder(true)} style={s.actionBtn} title="New folder">
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M3 3h4l1.5 1.5H13a1 1 0 011 1V12a1 1 0 01-1 1H3a1 1 0 01-1-1V4a1 1 0 011-1z" /><path d="M8 7v4M6 9h4" /></svg>
+                </button>
+                <button onClick={() => fileInputRef.current?.click()} style={s.uploadBtn}>
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M8 12V3M4 7l4-4 4 4" /><path d="M2 13h12" /></svg>
+                  Upload
+                </button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  style={{ display: 'none' }}
+                  onChange={e => { if (e.target.files.length) handleUploadFiles(e.target.files); e.target.value = ''; }}
+                />
+                <div style={s.viewControls}>
+                  <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={s.sortSelect}>
+                    <option value="name">Name</option>
+                    <option value="size">Size</option>
+                    <option value="modified">Modified</option>
+                  </select>
+                  <button onClick={() => setSortOrder(o => o === 'asc' ? 'desc' : 'asc')} style={s.iconBtn}>
+                    {sortOrder === 'asc' ? '\u2191' : '\u2193'}
+                  </button>
+                  <button onClick={() => setViewMode(v => v === 'grid' ? 'list' : 'grid')} style={s.iconBtn}>
+                    {viewMode === 'grid' ? (
+                      <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="1" width="6" height="6" rx="1" /><rect x="9" y="1" width="6" height="6" rx="1" /><rect x="1" y="9" width="6" height="6" rx="1" /><rect x="9" y="9" width="6" height="6" rx="1" /></svg>
+                    ) : (
+                      <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="2" width="14" height="3" rx="1" /><rect x="1" y="7" width="14" height="3" rx="1" /><rect x="1" y="12" width="14" height="3" rx="1" /></svg>
+                    )}
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* New folder input */}
             {creatingFolder && (
@@ -600,67 +793,112 @@ export default function Drive() {
               </div>
             ) : viewMode === 'grid' ? (
               <div style={s.fileGrid}>
-                {displayItems.map((item, i) => (
-                  <button
-                    key={i}
-                    onClick={() => item.type === 'directory' ? navigateTo(item.path) : setSelectedFile(item)}
-                    onContextMenu={(e) => handleContextMenu(e, item)}
-                    style={s.fileCard}
-                  >
-                    <FileIcon type={item.type === 'directory' ? 'folder' : getFileIcon(item.extension)} />
-                    {renaming?.path === item.path ? (
+                {displayItems.map((item, i) => {
+                  const isSelected = selectedItems.has(item.path);
+                  return (
+                    <div
+                      key={i}
+                      onClick={() => {
+                        if (hasSelection) { toggleSelect(item, i, {}); return; }
+                        if (item.type === 'directory') navigateTo(item.path); else setSelectedFile(item);
+                      }}
+                      onContextMenu={(e) => handleContextMenu(e, item)}
+                      style={{ ...s.fileCard, ...(isSelected ? s.fileCardSelected : {}), position: 'relative' }}
+                    >
                       <input
-                        autoFocus
-                        value={renameValue}
-                        onChange={e => setRenameValue(e.target.value)}
-                        onKeyDown={e => { if (e.key === 'Enter') submitRename(); if (e.key === 'Escape') setRenaming(null); }}
-                        onBlur={submitRename}
-                        onClick={e => e.stopPropagation()}
-                        style={s.renameInput}
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => {}}
+                        onClick={(e) => { e.stopPropagation(); toggleSelect(item, i, e); }}
+                        style={{ ...s.checkbox, position: 'absolute', top: '8px', left: '8px' }}
                       />
-                    ) : (
-                      <div style={s.fileName}>{item.name}</div>
-                    )}
-                    <div style={s.fileMeta}>
-                      {item.type === 'directory' ? 'Folder' : formatBytes(item.size)}
-                      {item.modified ? ` · ${formatDate(item.modified)}` : ''}
+                      <button
+                        onClick={(e) => { e.stopPropagation(); toggleFavorite(item.path); }}
+                        style={{ ...s.starBtn, ...(favorites.has(item.path) ? s.starBtnActive : {}), position: 'absolute', top: '6px', right: '6px' }}
+                      >
+                        {favorites.has(item.path) ? '\u2605' : '\u2606'}
+                      </button>
+                      <FileIcon type={item.type === 'directory' ? 'folder' : getFileIcon(item.extension)} />
+                      {renaming?.path === item.path ? (
+                        <input
+                          autoFocus
+                          value={renameValue}
+                          onChange={e => setRenameValue(e.target.value)}
+                          onKeyDown={e => { if (e.key === 'Enter') submitRename(); if (e.key === 'Escape') setRenaming(null); }}
+                          onBlur={submitRename}
+                          onClick={e => e.stopPropagation()}
+                          style={s.renameInput}
+                        />
+                      ) : (
+                        <div style={s.fileName}>{item.name}</div>
+                      )}
+                      <div style={s.fileMeta}>
+                        {item.type === 'directory' ? 'Folder' : formatBytes(item.size)}
+                        {item.modified ? ` · ${formatDate(item.modified)}` : ''}
+                      </div>
                     </div>
-                  </button>
-                ))}
+                  );
+                })}
               </div>
             ) : (
               <div style={s.fileList}>
                 <div style={s.listHeader}>
+                  <input
+                    type="checkbox"
+                    checked={displayItems.length > 0 && selectedItems.size === displayItems.length}
+                    onChange={selectAll}
+                    style={s.checkbox}
+                  />
                   <span style={{ width: '28px' }} />
                   <span style={{ ...s.listHeaderCell, flex: 1 }}>Name</span>
+                  <span style={{ ...s.listHeaderCell, width: '32px' }} />
                   <span style={{ ...s.listHeaderCell, width: '80px', textAlign: 'right' }}>Size</span>
                   <span style={{ ...s.listHeaderCell, width: '120px', textAlign: 'right' }}>Modified</span>
                 </div>
-                {displayItems.map((item, i) => (
-                  <button
-                    key={i}
-                    onClick={() => item.type === 'directory' ? navigateTo(item.path) : setSelectedFile(item)}
-                    onContextMenu={(e) => handleContextMenu(e, item)}
-                    style={s.fileListRow}
-                  >
-                    <FileIcon type={item.type === 'directory' ? 'folder' : getFileIcon(item.extension)} />
-                    {renaming?.path === item.path ? (
+                {displayItems.map((item, i) => {
+                  const isSelected = selectedItems.has(item.path);
+                  return (
+                    <div
+                      key={i}
+                      onClick={() => {
+                        if (hasSelection) { toggleSelect(item, i, {}); return; }
+                        if (item.type === 'directory') navigateTo(item.path); else setSelectedFile(item);
+                      }}
+                      onContextMenu={(e) => handleContextMenu(e, item)}
+                      style={{ ...s.fileListRow, ...(isSelected ? s.fileListRowSelected : {}) }}
+                    >
                       <input
-                        autoFocus
-                        value={renameValue}
-                        onChange={e => setRenameValue(e.target.value)}
-                        onKeyDown={e => { if (e.key === 'Enter') submitRename(); if (e.key === 'Escape') setRenaming(null); }}
-                        onBlur={submitRename}
-                        onClick={e => e.stopPropagation()}
-                        style={{ ...s.renameInput, flex: 1 }}
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => {}}
+                        onClick={(e) => { e.stopPropagation(); toggleSelect(item, i, e); }}
+                        style={s.checkbox}
                       />
-                    ) : (
-                      <span style={s.fileListName}>{item.name}</span>
-                    )}
-                    <span style={s.fileListSize}>{item.type === 'directory' ? '—' : formatBytes(item.size)}</span>
-                    <span style={s.fileListDate}>{formatDate(item.modified)}</span>
-                  </button>
-                ))}
+                      <FileIcon type={item.type === 'directory' ? 'folder' : getFileIcon(item.extension)} />
+                      {renaming?.path === item.path ? (
+                        <input
+                          autoFocus
+                          value={renameValue}
+                          onChange={e => setRenameValue(e.target.value)}
+                          onKeyDown={e => { if (e.key === 'Enter') submitRename(); if (e.key === 'Escape') setRenaming(null); }}
+                          onBlur={submitRename}
+                          onClick={e => e.stopPropagation()}
+                          style={{ ...s.renameInput, flex: 1 }}
+                        />
+                      ) : (
+                        <span style={s.fileListName}>{item.name}</span>
+                      )}
+                      <button
+                        onClick={(e) => { e.stopPropagation(); toggleFavorite(item.path); }}
+                        style={{ ...s.starBtn, ...(favorites.has(item.path) ? s.starBtnActive : {}) }}
+                      >
+                        {favorites.has(item.path) ? '\u2605' : '\u2606'}
+                      </button>
+                      <span style={s.fileListSize}>{item.type === 'directory' ? '—' : formatBytes(item.size)}</span>
+                      <span style={s.fileListDate}>{formatDate(item.modified)}</span>
+                    </div>
+                  );
+                })}
               </div>
             )}
 
@@ -672,10 +910,29 @@ export default function Drive() {
                 )}
                 <button style={s.contextMenuItem} onClick={() => openCreateShare(contextMenu.item.path, contextMenu.item.type)}>Share</button>
                 <button style={s.contextMenuItem} onClick={() => startRename(contextMenu.item)}>Rename</button>
+                <button style={s.contextMenuItem} onClick={() => openMoveDialog([contextMenu.item.path])}>Move to...</button>
+                <button style={s.contextMenuItem} onClick={() => toggleFavorite(contextMenu.item.path)}>
+                  {favorites.has(contextMenu.item.path) ? 'Unfavorite' : 'Favorite'}
+                </button>
                 <button style={{ ...s.contextMenuItem, color: '#fca5a5' }} onClick={() => handleDelete(contextMenu.item)}>Delete</button>
               </div>
             )}
           </>
+        )}
+
+        {/* ═══ Favorites View ═══ */}
+        {activeView === 'favorites' && (
+          <FavoritesView
+            items={favoriteItems}
+            loading={favoritesLoading}
+            onToggleFavorite={toggleFavorite}
+            onNavigateToFile={(filePath) => {
+              const parts = filePath.split('/');
+              parts.pop();
+              setActiveView('files');
+              setCurrentPath(parts.join('/'));
+            }}
+          />
         )}
 
         {/* ═══ Shared Links View ═══ */}
@@ -697,6 +954,15 @@ export default function Drive() {
             onRestore={restoreTrashItem}
             onDelete={permanentDeleteTrashItem}
             onEmpty={emptyTrash}
+          />
+        )}
+
+        {/* ═══ Settings View ═══ */}
+        {activeView === 'settings' && (
+          <SettingsView
+            user={user}
+            storageInfo={storageInfo}
+            signOut={signOut}
           />
         )}
       </div>
@@ -765,6 +1031,118 @@ export default function Drive() {
               </>
             )}
           </div>
+        </div>
+      )}
+
+      {/* ═══ Move Dialog ═══ */}
+      {showMoveDialog && (
+        <div style={s.dialogOverlay} onClick={() => setShowMoveDialog(false)}>
+          <div style={{ ...s.dialogCard, maxWidth: '480px' }} onClick={e => e.stopPropagation()}>
+            <div style={s.dialogTitle}>Move {moveItemPaths.length} item{moveItemPaths.length > 1 ? 's' : ''}</div>
+            <div style={s.dialogSubtitle}>Select destination folder</div>
+
+            {/* Move breadcrumbs */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '12px', flexWrap: 'wrap' }}>
+              <button
+                onClick={() => fetchMoveFolders('')}
+                style={{ ...s.breadcrumbBtn, ...(movePath === '' ? { color: '#e2e8f0', fontWeight: 600 } : {}) }}
+              >
+                Root
+              </button>
+              {movePath && movePath.split('/').filter(Boolean).map((seg, i, arr) => (
+                <React.Fragment key={i}>
+                  <span style={s.breadcrumbSep}>/</span>
+                  <button
+                    onClick={() => fetchMoveFolders(arr.slice(0, i + 1).join('/'))}
+                    style={{ ...s.breadcrumbBtn, ...(i === arr.length - 1 ? { color: '#e2e8f0', fontWeight: 600 } : {}) }}
+                  >
+                    {seg}
+                  </button>
+                </React.Fragment>
+              ))}
+            </div>
+
+            {/* Folder list */}
+            <div style={{ maxHeight: '240px', overflow: 'auto', marginBottom: '16px', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '8px' }}>
+              {moveFolders.length === 0 ? (
+                <div style={{ padding: '20px', textAlign: 'center', color: 'rgba(255,255,255,0.3)', fontSize: '13px' }}>No subfolders</div>
+              ) : (
+                moveFolders.map((folder, i) => (
+                  <button
+                    key={i}
+                    onClick={() => fetchMoveFolders(folder.path)}
+                    style={{ ...s.fileListRow, borderBottom: '1px solid rgba(255,255,255,0.04)' }}
+                  >
+                    <FileIcon type="folder" />
+                    <span style={s.fileListName}>{folder.name}</span>
+                  </button>
+                ))
+              )}
+            </div>
+
+            <div style={s.dialogActions}>
+              <button onClick={() => setShowMoveDialog(false)} style={s.dialogCancelBtn}>Cancel</button>
+              <button onClick={executeMove} disabled={moveLoading} style={s.dialogConfirmBtn}>
+                {moveLoading ? 'Moving...' : 'Move Here'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Favorites View ───
+function FavoritesView({ items, loading, onToggleFavorite, onNavigateToFile }) {
+  return (
+    <div>
+      <div style={s.header}>
+        <h1 style={s.title}>Favorites</h1>
+      </div>
+      {loading ? (
+        <div style={s.emptyMsg}>Loading...</div>
+      ) : items.length === 0 ? (
+        <div style={s.emptyState}>
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.15)" strokeWidth="1.5">
+            <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+          </svg>
+          <div style={{ fontSize: '15px', color: 'rgba(255,255,255,0.35)', marginTop: '12px' }}>
+            No favorites yet.
+          </div>
+          <div style={{ fontSize: '13px', color: 'rgba(255,255,255,0.2)', marginTop: '4px' }}>
+            Click the star on any file to add it here.
+          </div>
+        </div>
+      ) : (
+        <div style={s.fileList}>
+          <div style={s.listHeader}>
+            <span style={{ width: '28px' }} />
+            <span style={{ ...s.listHeaderCell, flex: 1 }}>Name</span>
+            <span style={{ ...s.listHeaderCell, width: '80px', textAlign: 'right' }}>Size</span>
+            <span style={{ ...s.listHeaderCell, width: '120px', textAlign: 'right' }}>Modified</span>
+            <span style={{ ...s.listHeaderCell, width: '80px', textAlign: 'right' }}>Actions</span>
+          </div>
+          {items.map(item => (
+            <div
+              key={item.id}
+              style={{ ...s.fileListRow, ...(item.missing ? { opacity: 0.4 } : {}) }}
+              onClick={() => { if (!item.missing) onNavigateToFile(item.file_path); }}
+            >
+              <FileIcon type={item.type === 'directory' ? 'folder' : getFileIcon(item.extension)} />
+              <span style={s.fileListName}>{item.name}</span>
+              <span style={s.fileListSize}>{item.missing ? 'Missing' : item.type === 'directory' ? '—' : formatBytes(item.size)}</span>
+              <span style={s.fileListDate}>{formatDate(item.modified)}</span>
+              <span style={{ width: '80px', display: 'flex', justifyContent: 'flex-end' }}>
+                <button
+                  onClick={(e) => { e.stopPropagation(); onToggleFavorite(item.file_path); }}
+                  style={{ ...s.starBtn, ...s.starBtnActive }}
+                >
+                  {'\u2605'}
+                </button>
+              </span>
+            </div>
+          ))}
         </div>
       )}
     </div>
@@ -888,10 +1266,58 @@ function TrashView({ items, loading, onRestore, onDelete, onEmpty }) {
   );
 }
 
+// ─── Settings View ───
+function SettingsView({ user, storageInfo, signOut }) {
+  const percentColor = !storageInfo ? '#6366f1'
+    : storageInfo.percent >= 90 ? '#ef4444'
+    : storageInfo.percent >= 70 ? '#f59e0b'
+    : '#6366f1';
+
+  return (
+    <div>
+      <div style={s.header}>
+        <h1 style={s.title}>Settings</h1>
+      </div>
+      <div style={{ ...s.detailCard, maxWidth: '480px' }}>
+        <div style={s.detailMeta}>
+          <div style={s.detailRow}><span style={s.detailLabel}>Email</span><span>{user?.email}</span></div>
+          <div style={s.detailRow}><span style={s.detailLabel}>Joined</span><span>{user?.created_at ? formatDate(user.created_at) : '—'}</span></div>
+        </div>
+
+        {/* Storage bar */}
+        <div style={{ marginBottom: '24px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+            <span style={{ fontSize: '12px', fontWeight: 600, color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Storage</span>
+            {storageInfo && (
+              <span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.4)' }}>
+                {formatBytes(storageInfo.used)} of {formatBytes(storageInfo.total)} ({storageInfo.percent}%)
+              </span>
+            )}
+          </div>
+          <div style={{ height: '8px', borderRadius: '4px', background: 'rgba(255,255,255,0.06)', overflow: 'hidden' }}>
+            <div style={{
+              height: '100%',
+              borderRadius: '4px',
+              background: percentColor,
+              width: storageInfo ? `${storageInfo.percent}%` : '0%',
+              transition: 'width 0.3s',
+            }} />
+          </div>
+        </div>
+
+        <button onClick={signOut} style={{ ...s.dialogCancelBtn, width: '100%', textAlign: 'center' }}>
+          Sign Out
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── Sidebar ───
-function Sidebar({ user, signOut, activeView, onNavigate }) {
+function Sidebar({ user, activeView, onNavigate }) {
   const navItems = [
     { key: 'files', label: 'My Files', icon: 'M3 3h7l2 2h6a1 1 0 011 1v10a1 1 0 01-1 1H3a1 1 0 01-1-1V4a1 1 0 011-1z' },
+    { key: 'favorites', label: 'Favorites', icon: 'M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14l-5-4.87 6.91-1.01L12 2z' },
     { key: 'shared', label: 'Shared Links', icon: 'M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71' },
     { key: 'trash', label: 'Trash', icon: 'M3 6h18M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6M10 11v6M14 11v6M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2' },
   ];
@@ -920,12 +1346,24 @@ function Sidebar({ user, signOut, activeView, onNavigate }) {
           </button>
         ))}
       </nav>
+      {/* Settings pinned above footer */}
+      <div style={{ marginTop: 'auto', padding: '0 8px' }}>
+        <button
+          onClick={() => onNavigate('settings')}
+          style={{ ...s.sidebarItem, ...(activeView === 'settings' ? s.sidebarItemActive : {}), marginBottom: '8px' }}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="3" />
+            <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" />
+          </svg>
+          Settings
+        </button>
+      </div>
       <div style={s.sidebarFooter}>
         <div style={s.userInfo}>
           <div style={s.userAvatar}>{(user?.email || '?')[0].toUpperCase()}</div>
           <span style={s.userEmail}>{user?.email}</span>
         </div>
-        <button onClick={signOut} style={s.signOutBtn}>Sign out</button>
       </div>
     </div>
   );
@@ -999,15 +1437,13 @@ const s = {
     color: '#a5b4fc',
   },
   sidebarFooter: {
-    marginTop: 'auto',
-    padding: '16px 16px 8px',
+    padding: '12px 16px 8px',
     borderTop: '1px solid rgba(255,255,255,0.06)',
   },
   userInfo: {
     display: 'flex',
     alignItems: 'center',
     gap: '10px',
-    marginBottom: '8px',
   },
   userAvatar: {
     width: '28px',
@@ -1028,17 +1464,6 @@ const s = {
     overflow: 'hidden',
     textOverflow: 'ellipsis',
     whiteSpace: 'nowrap',
-  },
-  signOutBtn: {
-    padding: '6px 12px',
-    border: '1px solid rgba(255,255,255,0.08)',
-    borderRadius: '6px',
-    background: 'transparent',
-    color: 'rgba(255,255,255,0.4)',
-    fontSize: '12px',
-    cursor: 'pointer',
-    fontFamily: 'inherit',
-    width: '100%',
   },
   // Main content
   main: {
@@ -1121,6 +1546,23 @@ const s = {
     gap: '8px',
     marginBottom: '16px',
     marginTop: '8px',
+  },
+  selectionToolbar: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    marginBottom: '16px',
+    marginTop: '8px',
+    padding: '8px 14px',
+    borderRadius: '10px',
+    background: 'rgba(99,102,241,0.08)',
+    border: '1px solid rgba(99,102,241,0.15)',
+  },
+  selectionCount: {
+    fontSize: '13px',
+    fontWeight: 600,
+    color: '#a5b4fc',
+    marginRight: 'auto',
   },
   searchForm: {
     display: 'flex',
@@ -1280,6 +1722,28 @@ const s = {
     fontFamily: 'inherit',
     outline: 'none',
   },
+  // Checkbox
+  checkbox: {
+    width: '16px',
+    height: '16px',
+    accentColor: '#6366f1',
+    cursor: 'pointer',
+    flexShrink: 0,
+  },
+  // Star
+  starBtn: {
+    background: 'transparent',
+    border: 'none',
+    cursor: 'pointer',
+    fontSize: '16px',
+    color: 'rgba(255,255,255,0.2)',
+    padding: '2px 4px',
+    lineHeight: 1,
+    flexShrink: 0,
+  },
+  starBtnActive: {
+    color: '#f59e0b',
+  },
   // File grid
   fileGrid: {
     display: 'grid',
@@ -1300,6 +1764,10 @@ const s = {
     fontFamily: 'inherit',
     textAlign: 'center',
     transition: 'all 0.12s',
+  },
+  fileCardSelected: {
+    border: '1px solid rgba(99,102,241,0.4)',
+    background: 'rgba(99,102,241,0.08)',
   },
   fileName: {
     fontSize: '13px',
@@ -1345,6 +1813,11 @@ const s = {
     textAlign: 'left',
     width: '100%',
     transition: 'background 0.1s',
+  },
+  fileListRowSelected: {
+    background: 'rgba(99,102,241,0.08)',
+    border: '1px solid rgba(99,102,241,0.2)',
+    borderRadius: '6px',
   },
   fileListName: {
     flex: 1,
