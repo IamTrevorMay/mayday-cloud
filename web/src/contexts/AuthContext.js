@@ -28,6 +28,38 @@ export function AuthProvider({ children }) {
     return { error };
   }
 
+  async function signInWithPassword(email, password) {
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    return { data, error };
+  }
+
+  async function signUp(email, password, displayName) {
+    const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:4000';
+    const res = await fetch(`${API_URL}/api/auth/signup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password, displayName }),
+    });
+    const body = await res.json();
+    if (!res.ok) return { error: { message: body.error } };
+    // Set the session from the server response
+    await supabase.auth.setSession(body.session);
+    return { error: null };
+  }
+
+  async function signInWithStudio(email, password) {
+    const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:4000';
+    const res = await fetch(`${API_URL}/api/auth/studio`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    const body = await res.json();
+    if (!res.ok) return { error: { message: body.error } };
+    await supabase.auth.setSession(body.session);
+    return { error: null };
+  }
+
   async function signOut() {
     await supabase.auth.signOut();
     setSession(null);
@@ -38,6 +70,9 @@ export function AuthProvider({ children }) {
     user: session?.user ?? null,
     loading,
     signInWithEmail,
+    signInWithPassword,
+    signUp,
+    signInWithStudio,
     signOut,
   };
 

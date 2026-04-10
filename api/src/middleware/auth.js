@@ -1,4 +1,4 @@
-const { importJWK, jwtVerify } = require('jose');
+const { importJWK, jwtVerify, base64url } = require('jose');
 const crypto = require('crypto');
 const { createClient } = require('@supabase/supabase-js');
 
@@ -8,10 +8,18 @@ function getSupabase() {
   return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 }
 
-async function getPublicKey() {
+async function getJwtKey() {
   if (cachedKey) return cachedKey;
-  const jwk = JSON.parse(process.env.SUPABASE_JWT_JWK);
-  cachedKey = await importJWK(jwk, 'ES256');
+  const secret = process.env.SUPABASE_JWT_JWK;
+
+  // Support both raw JWT secret (HS256) and JWK JSON (ES256)
+  if (secret.startsWith('{')) {
+    const jwk = JSON.parse(secret);
+    cachedKey = await importJWK(jwk, 'ES256');
+  } else {
+    // Raw secret string — encode as HMAC key
+    cachedKey = new TextEncoder().encode(secret);
+  }
   return cachedKey;
 }
 
@@ -88,7 +96,7 @@ async function verifyToken(token) {
 
   // JWT path
   if (!process.env.SUPABASE_JWT_JWK) throw new Error('JWT key not configured');
-  const key = await getPublicKey();
+  const key = await getJwtKey();
   const { payload } = await jwtVerify(token, key);
   return {
     id: payload.sub,

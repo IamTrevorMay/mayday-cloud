@@ -10,6 +10,7 @@ const nasRouter = require('./routes/nas');
 const sharesRouter = require('./routes/shares');
 const keysRouter = require('./routes/keys');
 const dropRouter = require('./routes/drop');
+const authRouter = require('./routes/auth');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -72,8 +73,9 @@ const tusServer = new TusServer({
 // Public health check
 app.get('/health', (req, res) => res.json({ ok: true, service: 'mayday-cloud-api' }));
 
-// Public routes (no auth) — share link drop endpoints
+// Public routes (no auth)
 app.use('/api/drop', dropRouter);
+app.use('/api/auth', authRouter);
 
 // Tus endpoint — handles its own auth in onUploadCreate
 app.all('/api/nas/tus', (req, res) => tusServer.handle(req, res));

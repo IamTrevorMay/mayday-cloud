@@ -83,6 +83,7 @@ export default function Drive() {
   // Upload state
   const [uploads, setUploads] = useState([]);
   const [dragOver, setDragOver] = useState(false);
+  const [dragOverFolder, setDragOverFolder] = useState(null);
   const fileInputRef = useRef(null);
 
   // Context menu
@@ -543,7 +544,8 @@ export default function Drive() {
   }
 
   // ─── Upload (tus for large files, multer for small) ───
-  async function handleUploadFiles(files) {
+  async function handleUploadFiles(files, targetPath) {
+    const uploadPath = targetPath !== undefined ? targetPath : currentPath;
     const { supabase } = await import('../lib/supabase');
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) return;
@@ -562,7 +564,7 @@ export default function Drive() {
           chunkSize: 5 * 1024 * 1024,
           metadata: {
             filename: file.name,
-            targetPath: currentPath,
+            targetPath: uploadPath,
             filetype: file.type,
           },
           headers: {
@@ -590,7 +592,7 @@ export default function Drive() {
         try {
           const formData = new FormData();
           formData.append('file', file);
-          formData.append('path', currentPath);
+          formData.append('path', uploadPath);
 
           await authedFetch('/api/nas/upload', { method: 'POST', body: formData });
           setUploads(prev => prev.map(u => u.id === id ? { ...u, progress: 100, status: 'done' } : u));
@@ -607,11 +609,31 @@ export default function Drive() {
   function handleDrop(e) {
     e.preventDefault();
     setDragOver(false);
+    setDragOverFolder(null);
     if (e.dataTransfer.files.length) handleUploadFiles(e.dataTransfer.files);
   }
 
   function handleDragOver(e) { e.preventDefault(); setDragOver(true); }
   function handleDragLeave() { setDragOver(false); }
+
+  function handleFolderDrop(e, folderPath) {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(false);
+    setDragOverFolder(null);
+    if (e.dataTransfer.files.length) handleUploadFiles(e.dataTransfer.files, folderPath);
+  }
+
+  function handleFolderDragOver(e, folderPath) {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOverFolder(folderPath);
+  }
+
+  function handleFolderDragLeave(e) {
+    e.stopPropagation();
+    setDragOverFolder(null);
+  }
 
   // ─── Context menu actions ───
   function handleContextMenu(e, item) {
@@ -900,7 +922,7 @@ export default function Drive() {
             )}
 
             {/* Drag overlay */}
-            {dragOver && (
+            {dragOver && !dragOverFolder && (
               <div style={s.dragOverlay}>
                 <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#6366f1" strokeWidth="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" /></svg>
                 <div style={{ fontSize: '18px', fontWeight: 600, color: '#a5b4fc' }}>Drop files to upload</div>
@@ -936,7 +958,15 @@ export default function Drive() {
                         if (item.type === 'directory') navigateTo(item.path); else setSelectedFile(item);
                       }}
                       onContextMenu={(e) => handleContextMenu(e, item)}
-                      style={{ ...s.fileCard, ...(isSelected ? s.fileCardSelected : {}), position: 'relative' }}
+                      onDrop={item.type === 'directory' ? (e) => handleFolderDrop(e, item.path) : undefined}
+                      onDragOver={item.type === 'directory' ? (e) => handleFolderDragOver(e, item.path) : undefined}
+                      onDragLeave={item.type === 'directory' ? handleFolderDragLeave : undefined}
+                      style={{
+                        ...s.fileCard,
+                        ...(isSelected ? s.fileCardSelected : {}),
+                        ...(dragOverFolder === item.path ? s.folderDropTarget : {}),
+                        position: 'relative',
+                      }}
                     >
                       <input
                         type="checkbox"
@@ -1002,7 +1032,14 @@ export default function Drive() {
                         if (item.type === 'directory') navigateTo(item.path); else setSelectedFile(item);
                       }}
                       onContextMenu={(e) => handleContextMenu(e, item)}
-                      style={{ ...s.fileListRow, ...(isSelected ? s.fileListRowSelected : {}) }}
+                      onDrop={item.type === 'directory' ? (e) => handleFolderDrop(e, item.path) : undefined}
+                      onDragOver={item.type === 'directory' ? (e) => handleFolderDragOver(e, item.path) : undefined}
+                      onDragLeave={item.type === 'directory' ? handleFolderDragLeave : undefined}
+                      style={{
+                        ...s.fileListRow,
+                        ...(isSelected ? s.fileListRowSelected : {}),
+                        ...(dragOverFolder === item.path ? s.folderDropTarget : {}),
+                      }}
                     >
                       <input
                         type="checkbox"
@@ -1915,6 +1952,13 @@ const s = {
     fontSize: '12px',
     fontWeight: 500,
     flexShrink: 0,
+  },
+  // Folder drop target highlight
+  folderDropTarget: {
+    background: 'rgba(99,102,241,0.15)',
+    outline: '2px dashed rgba(99,102,241,0.6)',
+    outlineOffset: '-2px',
+    borderRadius: '8px',
   },
   // Drag overlay
   dragOverlay: {
