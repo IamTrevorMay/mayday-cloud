@@ -30,11 +30,15 @@ const tusServer = new TusServer({
   async onUploadCreate(req, res, upload) {
     // Verify auth from header
     const header = req.headers.authorization;
-    if (!header) throw { status_code: 401, body: 'Missing authorization' };
+    if (!header) {
+      console.error('[tus] onUploadCreate: missing Authorization header');
+      throw { status_code: 401, body: 'Missing authorization' };
+    }
     const token = header.slice(7);
     try {
       await verifyToken(token);
-    } catch {
+    } catch (err) {
+      console.error('[tus] onUploadCreate: verifyToken failed:', err.message, '| token prefix:', token.slice(0, 20));
       throw { status_code: 401, body: 'Invalid token' };
     }
     return res;
