@@ -28,7 +28,7 @@ supabase/     Migration files
 
 ## Key Patterns
 
-- **Auth**: Dual-mode — Supabase JWT or API key (`mck_*` prefix). Role cache with 5-min TTL.
+- **Auth**: Email/password sign-up/sign-in on Cloud's own Supabase, plus "Sign in with Mayday Studio" flow that bridges to Studio Hub's Supabase. API also accepts `mck_*` API keys. Role cache with 5-min TTL.
 - **Uploads**: Small files (<5MB) via multer POST, large files via TUS resumable protocol (up to 10GB).
 - **Soft deletes**: Files move to `.trash/` with timestamp prefix, restorable.
 - **Thumbnails**: Sharp (images) + ffmpeg (video frames), cached by SHA256(path:mtime) in `.thumbs/`.
