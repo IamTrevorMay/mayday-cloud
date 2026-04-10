@@ -104,17 +104,18 @@ router.post('/studio', async (req, res) => {
     });
 
     if (linkErr) {
+      console.error('[studio-auth] generateLink (existing) failed:', linkErr);
       return res.status(500).json({ error: 'Failed to create Cloud session' });
     }
 
-    // Use the OTP from the generated link to verify and get a session
+    // Exchange the hashed token for a session
     const { data: otpData, error: otpErr } = await cloud.auth.verifyOtp({
-      email,
-      token: linkData.properties.hashed_token,
-      type: 'email',
+      token_hash: linkData.properties.hashed_token,
+      type: 'magiclink',
     });
 
     if (otpErr) {
+      console.error('[studio-auth] verifyOtp (existing) failed:', otpErr);
       return res.status(500).json({ error: 'Failed to create Cloud session' });
     }
 
@@ -135,6 +136,7 @@ router.post('/studio', async (req, res) => {
     });
 
     if (createErr) {
+      console.error('[studio-auth] createUser failed:', createErr);
       return res.status(500).json({ error: 'Failed to create Cloud account' });
     }
 
@@ -145,16 +147,17 @@ router.post('/studio', async (req, res) => {
     });
 
     if (linkErr) {
+      console.error('[studio-auth] generateLink (new) failed:', linkErr);
       return res.status(500).json({ error: 'Failed to create Cloud session' });
     }
 
     const { data: otpData, error: otpErr } = await cloud.auth.verifyOtp({
-      email,
-      token: linkData.properties.hashed_token,
-      type: 'email',
+      token_hash: linkData.properties.hashed_token,
+      type: 'magiclink',
     });
 
     if (otpErr) {
+      console.error('[studio-auth] verifyOtp (new) failed:', otpErr);
       return res.status(500).json({ error: 'Failed to create Cloud session' });
     }
 
