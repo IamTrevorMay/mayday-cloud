@@ -8,7 +8,25 @@ This file is the in-repo memory for the stabilization effort. It travels with co
 
 ## Current Focus
 
-**Phase 1 — Critical fixes.** Fix user-visible breakage and data-loss bugs before touching the test system. Rationale: writing tests against the current code would lock in several bugs; fixing first then testing avoids double work.
+**Phase 1 complete** (commit `dbdb861`). **Paused before Phase 2.**
+
+Next session picks up with **Phase 2 — Latent bombs** (items 5–8 below). Do NOT skip the Phase 1 verification steps before starting Phase 2.
+
+### Before resuming
+1. Restart pm2 on the work machine: `pm2 restart mayday-cloud-api`. The Phase 1 API changes (auth.js, drop.js) will not take effect until this is done.
+2. Confirm Vercel has deployed the web changes (should be automatic on push).
+3. Smoke-test Phase 1 exit criteria:
+   - Sign up a new user → stay logged in (not bounced to login)
+   - Sign in with an existing Cloud account → session persists
+   - Sign in with Mayday Studio for an existing user → land in their account, not a duplicate
+   - Create a download share link with `max_uses: 1`, download once, then try a second time → second attempt returns 410
+4. If any smoke test fails, fix before Phase 2.
+
+### Next: Phase 2 items
+5. Service role key misuse — `api/src/routes/auth.js:43, 60`
+6. TUS unmount cleanup — `web/src/pages/Drive.js`
+7. `authedFetch` token expiry refresh — `web/src/lib/supabase.js:13-34`
+8. TUS CORS preflight headers — `api/src/server.js` (fixes the drag-drop 401)
 
 ---
 
@@ -18,17 +36,13 @@ Findings from a parallel codebase audit. All items verified against actual code 
 
 ### Critical
 
-- [ ] **AuthContext mount race** — `web/src/contexts/AuthContext.js:10-24`
-  Both `getSession()` and `onAuthStateChange()` fire on mount and both call `setSession`. Late resolution of `getSession` can overwrite a fresh session with `null`, bouncing users back to login immediately after successful signup.
+- [x] **AuthContext mount race** — `web/src/contexts/AuthContext.js` — fixed in `dbdb861`. Listener is now authoritative; `getSession` is guarded by a ref so it cannot overwrite a fresh session.
 
-- [ ] **Studio SSO duplicate accounts** — `api/src/routes/auth.js:94`
-  `admin.listUsers()` is called with no pagination. Supabase defaults to 50 per page. Once the Cloud Supabase passes 50 users, any Studio login for a user beyond page 1 fails the existence check and creates a duplicate Cloud account, orphaning the user's files, favorites, and share links.
+- [x] **Studio SSO duplicate accounts** — `api/src/routes/auth.js` — fixed in `dbdb861`. Replaced `admin.listUsers()` with a direct `profiles` table lookup by email using `maybeSingle()`.
 
-- [ ] **Share link download endpoint ignores `used_count`** — `api/src/routes/drop.js`
-  Upload path increments `used_count` with optimistic locking; download path never touches it. Download-mode share links effectively have no usage limit until they expire.
+- [x] **Share link download endpoint ignores `used_count`** — `api/src/routes/drop.js` — fixed in `dbdb861`. Atomic optimistic-lock increment runs before streaming; directory listing is browse-only and does not consume a use.
 
-- [ ] **TUS `onSuccess` stale closure** — `web/src/pages/Drive.js:577-581`
-  `fetchListing(currentPath)` inside the TUS `onSuccess` callback captures `currentPath` at upload start. If the user navigates mid-upload, the listing refresh hits the wrong folder.
+- [x] **TUS `onSuccess` stale closure** — `web/src/pages/Drive.js` — fixed in `dbdb861`. Added a `currentPathRef` mirror and a `refreshIfViewing()` helper that only refetches if the user is still viewing the upload destination.
 
 ### High
 
@@ -70,17 +84,19 @@ Findings from a parallel codebase audit. All items verified against actual code 
 
 ## Roadmap
 
-### Phase 1 — Critical fixes
+### Phase 1 — Critical fixes ✓ COMPLETE (commit `dbdb861`)
 Fix user-visible breakage and data loss. ~1 afternoon.
 
-1. AuthContext mount race
-2. Studio SSO duplicate accounts
-3. Share link download `used_count`
-4. TUS `onSuccess` stale closure
+1. [x] AuthContext mount race
+2. [x] Studio SSO duplicate accounts
+3. [x] Share link download `used_count`
+4. [x] TUS `onSuccess` stale closure
 
 **Exit criteria:** signup stays logged in; Studio login for any existing user finds the right account; download share links honor `max_uses`; mid-upload navigation refreshes the correct folder.
 
-### Phase 2 — Latent bombs
+**Deploy notes:** Web auto-deploys via Vercel. API requires `pm2 restart mayday-cloud-api` on the work machine to pick up `auth.js` and `drop.js` changes.
+
+### Phase 2 — Latent bombs ← NEXT
 Security leaks and edge cases. ~1 day.
 
 5. Service role key misuse
