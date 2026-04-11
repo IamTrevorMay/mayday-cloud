@@ -153,11 +153,29 @@ router.get('/:token/download', async (req, res) => {
     const fullPath = sanitizePath(link.target_path);
     const stat = await fsp.stat(fullPath);
 
+    // Atomically increment used_count before starting the stream. Directory
+    // listing is browse-only and does not count as a use; only actual file
+    // downloads do. Optimistic lock prevents the race where two concurrent
+    // downloads both pass the max_uses check and bypass the limit.
+    async function consumeUse() {
+      const { data: updated, error: updateErr } = await sb
+        .from('share_links')
+        .update({ used_count: link.used_count + 1 })
+        .eq('id', link.id)
+        .eq('used_count', link.used_count)
+        .select('id');
+
+      if (updateErr || !updated || updated.length === 0) {
+        return false;
+      }
+      return true;
+    }
+
     if (stat.isDirectory()) {
       // Directory share
       const requestedFile = req.query.file;
       if (!requestedFile) {
-        // List files in directory
+        // List files in directory — browse action, does not consume a use
         const entries = await fsp.readdir(fullPath, { withFileTypes: true });
         const files = entries
           .filter(e => !e.isDirectory())
@@ -170,6 +188,11 @@ router.get('/:token/download', async (req, res) => {
         return res.status(400).json({ error: 'Path traversal blocked' });
       }
       const fileStat = await fsp.stat(filePath);
+
+      if (!(await consumeUse())) {
+        return res.status(410).json({ error: 'Link usage limit reached' });
+      }
+
       const ext = path.extname(requestedFile).toLowerCase().slice(1);
       res.setHeader('Content-Disposition', `attachment; filename="${requestedFile}"`);
       res.setHeader('Content-Type', getMimeType(ext));
@@ -183,6 +206,10 @@ router.get('/:token/download', async (req, res) => {
     }
 
     // File share — stream directly
+    if (!(await consumeUse())) {
+      return res.status(410).json({ error: 'Link usage limit reached' });
+    }
+
     const fileName = path.basename(fullPath);
     const ext = path.extname(fileName).toLowerCase().slice(1);
     res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);

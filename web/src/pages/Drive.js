@@ -86,6 +86,11 @@ export default function Drive() {
   const [dragOverFolder, setDragOverFolder] = useState(null);
   const fileInputRef = useRef(null);
 
+  // Ref mirror of currentPath so long-running upload callbacks can read the
+  // latest value instead of the one captured when the upload started.
+  const currentPathRef = useRef(currentPath);
+  useEffect(() => { currentPathRef.current = currentPath; }, [currentPath]);
+
   // Context menu
   const [contextMenu, setContextMenu] = useState(null);
 
@@ -550,6 +555,13 @@ export default function Drive() {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) return;
 
+    // Only refresh the listing if the user is still viewing the folder the
+    // file landed in. Reads currentPath from the ref at callback time, not
+    // from the closure captured when the upload started.
+    const refreshIfViewing = () => {
+      if (currentPathRef.current === uploadPath) fetchListing(uploadPath);
+    };
+
     const fileList = Array.from(files);
     for (const file of fileList) {
       const id = Date.now() + '_' + file.name;
@@ -576,7 +588,7 @@ export default function Drive() {
           },
           onSuccess() {
             setUploads(prev => prev.map(u => u.id === id ? { ...u, progress: 100, status: 'done' } : u));
-            fetchListing(currentPath);
+            refreshIfViewing();
             setTimeout(() => setUploads(prev => prev.filter(u => u.id !== id)), 3000);
           },
           onError(err) {
@@ -602,7 +614,7 @@ export default function Drive() {
       }
     }
     // Refresh for small files that completed synchronously
-    fetchListing(currentPath);
+    refreshIfViewing();
     setTimeout(() => setUploads(prev => prev.filter(u => u.status === 'done' ? false : true)), 3000);
   }
 

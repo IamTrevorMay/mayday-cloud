@@ -89,10 +89,22 @@ router.post('/studio', async (req, res) => {
     return res.status(401).json({ error: 'Invalid Mayday Studio credentials' });
   }
 
-  // 2. Check if this user already exists in Cloud
+  // 2. Check if this user already exists in Cloud. Query the profiles table
+  // directly by email — listUsers() pages at 50 by default and would miss
+  // any existing user past the first page, creating duplicate accounts.
   const cloud = getCloudSupabase();
-  const { data: existingUsers } = await cloud.auth.admin.listUsers();
-  const existingUser = existingUsers?.users?.find(u => u.email === email);
+  const { data: existingProfile, error: lookupErr } = await cloud
+    .from('profiles')
+    .select('id, email')
+    .eq('email', email)
+    .maybeSingle();
+
+  if (lookupErr) {
+    console.error('[studio-auth] profile lookup failed:', lookupErr);
+    return res.status(500).json({ error: 'Failed to look up Cloud account' });
+  }
+
+  const existingUser = existingProfile || null;
 
   let cloudSession;
 

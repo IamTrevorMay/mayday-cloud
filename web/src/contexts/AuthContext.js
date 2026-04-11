@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 
 const AuthContext = createContext(null);
@@ -6,16 +6,20 @@ const AuthContext = createContext(null);
 export function AuthProvider({ children }) {
   const [session, setSession] = useState(undefined); // undefined = loading
   const [loading, setLoading] = useState(true);
+  const authChangedRef = useRef(false);
 
   useEffect(() => {
-    // Get initial session
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    // Listener is the source of truth. If it fires before getSession resolves,
+    // we ignore the getSession result to avoid overwriting a fresh session
+    // (e.g. one set by signUp/signInWithStudio) with a stale mount-time value.
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      authChangedRef.current = true;
       setSession(session);
       setLoading(false);
     });
 
-    // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (authChangedRef.current) return;
       setSession(session);
       setLoading(false);
     });
