@@ -2,6 +2,8 @@
 
 Personal cloud storage platform backed by a 60TB Yotamaster NAS rack.
 
+> **See [STATUS.md](./STATUS.md)** for the current audit findings, active bug list, and phased stabilization roadmap. Check it before starting new work.
+
 ## Architecture
 
 - **Web**: React 18 + Craco SPA, deployed to Vercel at `cloud.maydaystudio.net`
