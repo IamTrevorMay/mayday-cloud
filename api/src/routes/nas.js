@@ -55,8 +55,8 @@ router.get('/list', async (req, res) => {
 
     const isRoot = !requestedPath || requestedPath === '' || requestedPath === '/';
     let items = (await Promise.all(entries.map(async (entry) => {
-      // Hide system directories at root level
-      if (isRoot && HIDDEN_DIRS.has(entry.name)) return null;
+      // Hide dotfiles/dotfolders (system dirs, .DS_Store, etc.)
+      if (entry.name.startsWith('.')) return null;
       try {
         const entryPath = path.join(fullPath, entry.name);
         const stat = await fsp.stat(entryPath);

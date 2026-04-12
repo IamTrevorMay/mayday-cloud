@@ -2,31 +2,20 @@
 
 This file is the in-repo memory for the stabilization effort. It travels with commits so any machine working on this project can pick up context immediately. Update it as work progresses: check off items, add new findings, adjust phases.
 
-**Last updated:** 2026-04-11
+**Last updated:** 2026-04-12
 
 ---
 
 ## Current Focus
 
-**Phase 1 complete** (commit `dbdb861`). **Paused before Phase 2.**
+**Phase 1 complete** (commit `dbdb861`). **Phase 2 complete** (2026-04-12). **Paused before Phase 3.**
 
-Next session picks up with **Phase 2 — Latent bombs** (items 5–8 below). Do NOT skip the Phase 1 verification steps before starting Phase 2.
+Phase 1 verified: signup persistence, existing login, Studio SSO, share link max_uses all passing.
 
-### Before resuming
-1. Restart pm2 on the work machine: `pm2 restart mayday-cloud-api`. The Phase 1 API changes (auth.js, drop.js) will not take effect until this is done.
-2. Confirm Vercel has deployed the web changes (should be automatic on push).
-3. Smoke-test Phase 1 exit criteria:
-   - Sign up a new user → stay logged in (not bounced to login)
-   - Sign in with an existing Cloud account → session persists
-   - Sign in with Mayday Studio for an existing user → land in their account, not a duplicate
-   - Create a download share link with `max_uses: 1`, download once, then try a second time → second attempt returns 410
-4. If any smoke test fails, fix before Phase 2.
+Next session picks up with **Phase 3 — Test system** (items 9–12 below).
 
-### Next: Phase 2 items
-5. Service role key misuse — `api/src/routes/auth.js:43, 60`
-6. TUS unmount cleanup — `web/src/pages/Drive.js`
-7. `authedFetch` token expiry refresh — `web/src/lib/supabase.js:13-34`
-8. TUS CORS preflight headers — `api/src/server.js` (fixes the drag-drop 401)
+### Additional fix (2026-04-12)
+- Hidden files (dotfiles) were showing in the Drive listing. Fixed `api/src/routes/nas.js` to filter all entries starting with `.` at every directory level (previously only filtered `.trash`/`.thumbs`/`.tus-staging` at root).
 
 ---
 
@@ -46,17 +35,13 @@ Findings from a parallel codebase audit. All items verified against actual code 
 
 ### High
 
-- [ ] **Service role key used for password sign-in** — `api/src/routes/auth.js:43, 60`
-  `signInWithPassword` is called on a client constructed with `SUPABASE_SERVICE_ROLE_KEY`. Principle-of-least-privilege violation — should use the anon key.
+- [x] **Service role key used for password sign-in** — `api/src/routes/auth.js` — fixed 2026-04-12. Added `SUPABASE_ANON_KEY` to api/.env; `signInWithPassword` now uses anon client. Service role reserved for admin ops only.
 
-- [ ] **TUS uploads not aborted on unmount** — `web/src/pages/Drive.js`
-  No cleanup effect tracks active `tus.Upload` instances. Unmounting mid-upload leaves orphaned uploads running and triggers "state update on unmounted component" warnings.
+- [x] **TUS uploads not aborted on unmount** — `web/src/pages/Drive.js` — fixed 2026-04-12. Active uploads tracked in `activeTusUploads` ref, aborted on component unmount.
 
-- [ ] **Token expiry not refreshed in `authedFetch`** — `web/src/lib/supabase.js:13-34`
-  No check of `session.expires_at`. Long-lived tabs start 401ing silently once the JWT expires, with no auto-refresh and no user feedback.
+- [x] **Token expiry not refreshed in `authedFetch`** — `web/src/lib/supabase.js` — fixed 2026-04-12. Added `getFreshSession()` that auto-refreshes tokens expiring within 60s. Used by both `authedFetch` and `authedUrl`.
 
-- [ ] **TUS CORS preflight missing required headers** — `api/src/server.js`
-  `cors({ origin: true, credentials: true })` does not explicitly allow `Authorization`, `Tus-Resumable`, `Upload-Length`, `Upload-Metadata`, or expose TUS response headers. This is the root cause of the drag-drop 401 seen in production.
+- [x] **TUS CORS preflight missing required headers** — `api/src/server.js` — fixed 2026-04-12. CORS now explicitly allows TUS request headers and exposes TUS response headers.
 
 - [ ] **Sync client: watcher races startup sync** — `client/src/sync-engine.js:99`
   Chokidar starts while `_startupSync` is still populating the database. Same `relPath` can be written by both paths, producing duplicate/mis-ordered queue entries.
@@ -96,17 +81,17 @@ Fix user-visible breakage and data loss. ~1 afternoon.
 
 **Deploy notes:** Web auto-deploys via Vercel. API requires `pm2 restart mayday-cloud-api` on the work machine to pick up `auth.js` and `drop.js` changes.
 
-### Phase 2 — Latent bombs ← NEXT
-Security leaks and edge cases. ~1 day.
+### Phase 2 — Latent bombs ✓ COMPLETE (2026-04-12)
+Security leaks and edge cases.
 
-5. Service role key misuse
-6. TUS unmount cleanup
-7. `authedFetch` token expiry refresh
-8. TUS CORS preflight headers (fixes drag-drop 401)
+5. [x] Service role key misuse
+6. [x] TUS unmount cleanup
+7. [x] `authedFetch` token expiry refresh
+8. [x] TUS CORS preflight headers (fixes drag-drop 401)
 
 **Exit criteria:** large drag-drop uploads succeed from `www.mayday.systems`; long-lived tabs recover after token expiry; navigating during upload leaves no console warnings.
 
-### Phase 3 — Test system: Stage 1 + Stage 2
+### Phase 3 — Test system: Stage 1 + Stage 2 ← NEXT
 Safety net before further changes. ~1 day.
 
 9. `api/scripts/smoke.js` — hits every public route, green/red per endpoint

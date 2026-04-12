@@ -91,6 +91,15 @@ export default function Drive() {
   const currentPathRef = useRef(currentPath);
   useEffect(() => { currentPathRef.current = currentPath; }, [currentPath]);
 
+  // Track active TUS uploads so we can abort them on unmount
+  const activeTusUploads = useRef(new Map());
+  useEffect(() => {
+    return () => {
+      activeTusUploads.current.forEach(upload => upload.abort());
+      activeTusUploads.current.clear();
+    };
+  }, []);
+
   // Context menu
   const [contextMenu, setContextMenu] = useState(null);
 
@@ -587,15 +596,18 @@ export default function Drive() {
             setUploads(prev => prev.map(u => u.id === id ? { ...u, progress: pct } : u));
           },
           onSuccess() {
+            activeTusUploads.current.delete(id);
             setUploads(prev => prev.map(u => u.id === id ? { ...u, progress: 100, status: 'done' } : u));
             refreshIfViewing();
             setTimeout(() => setUploads(prev => prev.filter(u => u.id !== id)), 3000);
           },
           onError(err) {
+            activeTusUploads.current.delete(id);
             setUploads(prev => prev.map(u => u.id === id ? { ...u, status: 'error', error: err.message } : u));
           },
         });
 
+        activeTusUploads.current.set(id, upload);
         upload.start();
       } else {
         // Use multer for small files

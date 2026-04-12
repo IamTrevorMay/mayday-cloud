@@ -16,7 +16,29 @@ const app = express();
 const PORT = process.env.PORT || 4000;
 const ASSETS_ROOT = process.env.ASSETS_ROOT || '/Volumes/May Server';
 
-app.use(cors({ origin: true, credentials: true }));
+app.use(cors({
+  origin: true,
+  credentials: true,
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'Tus-Resumable',
+    'Upload-Length',
+    'Upload-Metadata',
+    'Upload-Offset',
+    'Upload-Concat',
+    'Upload-Defer-Length',
+  ],
+  exposedHeaders: [
+    'Tus-Resumable',
+    'Upload-Offset',
+    'Upload-Length',
+    'Tus-Version',
+    'Tus-Extension',
+    'Tus-Max-Size',
+    'Location',
+  ],
+}));
 app.use(express.json());
 
 // ─── Tus resumable upload server ───
@@ -27,9 +49,12 @@ const tusServer = new TusServer({
   path: '/api/nas/tus',
   datastore: new FileStore({ directory: tusStaging }),
   maxSize: 10 * 1024 * 1024 * 1024, // 10GB
-  async onUploadCreate(req, res, upload) {
-    // Verify auth from header
-    const header = req.headers.authorization;
+  // @tus/server v2: callbacks receive (req, upload) where req is a Web API
+  // Request and upload has { id, metadata, size, offset, storage }.
+  async onUploadCreate(req, upload) {
+    const header = typeof req.headers.get === 'function'
+      ? req.headers.get('authorization')
+      : req.headers.authorization;
     if (!header) {
       console.error('[tus] onUploadCreate: missing Authorization header');
       throw { status_code: 401, body: 'Missing authorization' };
@@ -41,10 +66,10 @@ const tusServer = new TusServer({
       console.error('[tus] onUploadCreate: verifyToken failed:', err.message, '| token prefix:', token.slice(0, 20));
       throw { status_code: 401, body: 'Invalid token' };
     }
-    return res;
+    return upload;
   },
-  async onUploadFinish(req, res, upload) {
-    // Move completed file to target path
+  async onUploadFinish(req, upload) {
+    // Move completed file from staging to target path
     try {
       const metadata = upload.metadata || {};
       const filename = metadata.filename || upload.id;
@@ -61,7 +86,8 @@ const tusServer = new TusServer({
         throw new Error('Path traversal blocked');
       }
 
-      const srcFile = path.join(tusStaging, upload.id);
+      // v2: storage.path is the absolute path to the completed file
+      const srcFile = upload.storage?.path || path.join(tusStaging, upload.id);
       fs.renameSync(srcFile, destFile);
 
       // Clean up .info file
@@ -70,7 +96,7 @@ const tusServer = new TusServer({
     } catch (err) {
       console.error('[tus] onUploadFinish error:', err.message);
     }
-    return res;
+    return upload;
   },
 });
 

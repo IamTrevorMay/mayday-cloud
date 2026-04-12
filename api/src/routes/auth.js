@@ -3,8 +3,14 @@ const { createClient } = require('@supabase/supabase-js');
 
 const router = express.Router();
 
+// Service-role client — for admin operations (createUser, generateLink, profile lookups)
 function getCloudSupabase() {
   return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
+}
+
+// Anon client — for user-level operations (signInWithPassword)
+function getCloudAnonSupabase() {
+  return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
 }
 
 function getStudioSupabase() {
@@ -39,8 +45,8 @@ router.post('/signup', async (req, res) => {
     return res.status(400).json({ error: error.message });
   }
 
-  // Sign them in immediately
-  const anonSb = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
+  // Sign them in immediately (anon key — no need for service role here)
+  const anonSb = getCloudAnonSupabase();
   const { data: signIn, error: signInErr } = await anonSb.auth.signInWithPassword({ email, password });
   if (signInErr) {
     return res.status(500).json({ error: 'Account created but sign-in failed. Try logging in.' });
@@ -56,8 +62,7 @@ router.post('/login', async (req, res) => {
     return res.status(400).json({ error: 'Email and password are required' });
   }
 
-  // Use a client-level Supabase (not service role) for password auth
-  const sb = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
+  const sb = getCloudAnonSupabase();
   const { data, error } = await sb.auth.signInWithPassword({ email, password });
 
   if (error) {
