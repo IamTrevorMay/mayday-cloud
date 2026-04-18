@@ -8,11 +8,11 @@ This file is the in-repo memory for the stabilization effort. It travels with co
 
 ## Current Focus
 
-**Phase 1 complete** (commit `dbdb861`). **Phase 2 complete** (2026-04-12). **Phase 3 complete** (commit `468dec3`). **Phase 4 complete** (commit `40ccd2b`).
+**Phase 1 complete** (commit `dbdb861`). **Phase 2 complete** (2026-04-12). **Phase 3 complete** (commit `468dec3`). **Phase 4 complete** (commit `40ccd2b`). **Phase 5 complete** (commit `d6b5e44`).
 
 Phase 1 verified: signup persistence, existing login, Studio SSO, share link max_uses all passing.
 
-Next session picks up with **Phase 5 — Playwright e2e tests** (items 17–19 below).
+Next session picks up with **Phase 6 — Hardening & observability** (items 20–24 below).
 
 ### Additional fix (2026-04-12)
 - Hidden files (dotfiles) were showing in the Drive listing. Fixed `api/src/routes/nas.js` to filter all entries starting with `.` at every directory level (previously only filtered `.trash`/`.thumbs`/`.tus-staging` at root).
@@ -114,16 +114,20 @@ CLI stability.
 
 **Exit criteria:** sync client survives crash-resume without losing or duplicating files; permission errors are visible in the log.
 
-### Phase 5 — Test system: Stage 3 (Playwright e2e) ← NEXT
-Catch the race-condition class of bugs. ~1 day.
+### Phase 5 — Test system: Stage 3 (Playwright e2e) ✓ COMPLETE (commit `d6b5e44`)
+Catch the race-condition class of bugs.
 
-17. Playwright harness against web dev server + test Supabase
-18. Happy-path flows: signup, login, Studio SSO, drag-drop to current folder, drag-drop to subfolder, mid-upload navigation
-19. Run in CI on PRs (slow lane)
+17. [x] Playwright harness — serves static build, Chromium only
+18. [x] 16 e2e tests: login page (10), navigation/routing (4), drop page (2)
+19. [x] CI job added (slow lane, runs after web-build, uploads failure screenshots)
+
+**Bonus fix:** AuthContext 5-second loading timeout — app no longer hangs forever if Supabase auth init fails to resolve (network issues, etc.)
+
+**Run locally:** `cd web && npm run build && npm run test:e2e`
 
 **Exit criteria:** race-condition bugs are reproducibly caught by e2e, not just unit tests.
 
-### Phase 6 — Hardening & observability
+### Phase 6 — Hardening & observability ← NEXT
 ~1-2 days spread out.
 
 20. CORS origin allow-list
