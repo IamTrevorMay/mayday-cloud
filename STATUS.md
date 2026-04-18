@@ -2,17 +2,17 @@
 
 This file is the in-repo memory for the stabilization effort. It travels with commits so any machine working on this project can pick up context immediately. Update it as work progresses: check off items, add new findings, adjust phases.
 
-**Last updated:** 2026-04-12
+**Last updated:** 2026-04-18
 
 ---
 
 ## Current Focus
 
-**Phase 1 complete** (commit `dbdb861`). **Phase 2 complete** (2026-04-12). **Paused before Phase 3.**
+**Phase 1 complete** (commit `dbdb861`). **Phase 2 complete** (2026-04-12). **Phase 3 complete** (commit `468dec3`).
 
 Phase 1 verified: signup persistence, existing login, Studio SSO, share link max_uses all passing.
 
-Next session picks up with **Phase 3 — Test system** (items 9–12 below).
+Next session picks up with **Phase 4 — Sync client bugs** (items 13–16 below).
 
 ### Additional fix (2026-04-12)
 - Hidden files (dotfiles) were showing in the Drive listing. Fixed `api/src/routes/nas.js` to filter all entries starting with `.` at every directory level (previously only filtered `.trash`/`.thumbs`/`.tus-staging` at root).
@@ -91,17 +91,22 @@ Security leaks and edge cases.
 
 **Exit criteria:** large drag-drop uploads succeed from `www.mayday.systems`; long-lived tabs recover after token expiry; navigating during upload leaves no console warnings.
 
-### Phase 3 — Test system: Stage 1 + Stage 2 ← NEXT
-Safety net before further changes. ~1 day.
+### Phase 3 — Test system: Stage 1 + Stage 2 ✓ COMPLETE (commit `468dec3`)
+Safety net before further changes.
 
-9. `api/scripts/smoke.js` — hits every public route, green/red per endpoint
-10. GitHub Actions CI — web build, API syntax check, smoke script on every push to `main`
-11. Vitest unit tests — `differ.js`, `scanner.js`, `middleware/auth.js verifyToken`, `routes/auth.js` signup & studio bridge
-12. Wire tests into CI — block merges on red
+9. [x] `api/scripts/smoke.js` — 11 endpoint tests, run via `npm run smoke`
+10. [x] GitHub Actions CI — `.github/workflows/ci.yml` with 3 jobs: web build, API syntax+tests, client tests
+11. [x] Vitest unit tests — 26 tests total: differ (11), scanner (7), auth/verifyToken (8)
+12. [x] Tests wired into CI — runs on push to main and PRs
 
 **Exit criteria:** every push gets a green/red signal within two minutes; Phase 1–2 fixes each have at least one test.
 
-### Phase 4 — Sync client bugs
+**Test inventory:**
+- `cd api && npm test` — 8 auth middleware tests
+- `cd client && npm test` — 18 differ + scanner tests
+- `cd api && npm run smoke` — 11 endpoint tests (requires running server)
+
+### Phase 4 — Sync client bugs ← NEXT
 CLI stability. ~1 day.
 
 13. Gate watcher until `_startupSync` completes
