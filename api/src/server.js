@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const rateLimit = require('express-rate-limit');
 const path = require('path');
 const fs = require('fs');
 const { Server: TusServer } = require('@tus/server');
@@ -46,6 +47,15 @@ app.use(cors({
   ],
 }));
 app.use(express.json());
+
+// ─── Rate limiting ───
+const globalLimiter = rateLimit({ windowMs: 60 * 1000, max: 100, standardHeaders: true, legacyHeaders: false });
+const authLimiter = rateLimit({ windowMs: 60 * 1000, max: 10, standardHeaders: true, legacyHeaders: false, message: { error: 'Too many attempts, try again later' } });
+const dropUploadLimiter = rateLimit({ windowMs: 60 * 1000, max: 5, standardHeaders: true, legacyHeaders: false, message: { error: 'Upload rate limit exceeded' } });
+
+app.use(globalLimiter);
+app.use('/api/auth', authLimiter);
+app.use('/api/drop/:token/upload', dropUploadLimiter);
 
 // ─── Structured request logging ───
 app.use((req, res, next) => {
