@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const logger = require('./logger');
 
 function scan(folder) {
   const results = [];
@@ -12,7 +13,8 @@ function _walk(root, dir, results) {
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true });
   } catch (err) {
-    // Skip unreadable directories
+    const relDir = path.relative(root, dir) || '.';
+    logger.warn(`Cannot read directory "${relDir}": ${err.message} — skipping subtree`);
     return;
   }
 
@@ -26,7 +28,8 @@ function _walk(root, dir, results) {
     try {
       const lstat = fs.lstatSync(fullPath);
       if (lstat.isSymbolicLink()) continue;
-    } catch {
+    } catch (err) {
+      logger.warn(`Cannot stat "${path.relative(root, fullPath)}": ${err.message} — skipping`);
       continue;
     }
 
@@ -40,8 +43,8 @@ function _walk(root, dir, results) {
           size: stat.size,
           mtimeMs: stat.mtimeMs,
         });
-      } catch {
-        // Skip files we can't stat
+      } catch (err) {
+        logger.warn(`Cannot stat file "${path.relative(root, fullPath)}": ${err.message} — skipping`);
       }
     }
   }

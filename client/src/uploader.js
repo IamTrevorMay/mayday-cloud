@@ -55,6 +55,15 @@ class UploadQueue {
     const localPath = path.join(localRoot, relPath);
     const remoteDirPath = path.posix.join(this.remoteFolder, path.dirname(relPath));
 
+    // If the file was deleted before we got to it, skip instead of retrying
+    const fs = require('fs');
+    if (!fs.existsSync(localPath)) {
+      logger.warn(`Skipping ${relPath}: file no longer exists`);
+      db.removeFile(relPath);
+      db.logAction(relPath, 'skip', 'file deleted before upload');
+      return;
+    }
+
     db.markSyncing(relPath);
 
     try {

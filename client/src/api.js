@@ -86,8 +86,22 @@ function uploadTus(config, localPath, remoteDirPath, callbacks = {}) {
     if (callbacks.onUploadCreated) callbacks.onUploadCreated(upload);
 
     upload.findPreviousUploads().then((prev) => {
-      if (prev.length > 0) upload.resumeUpload(prev[0]);
-      else upload.start();
+      if (prev.length > 0) {
+        // Only resume if the file hasn't changed since the previous upload
+        // started. If size or mtime differ, the file was replaced and resuming
+        // from a stale offset would produce a corrupted upload.
+        const prevMeta = prev[0].metadata || {};
+        const prevSize = parseInt(prevMeta.uploadSize || prevMeta.size || '0', 10);
+        if (prevSize === fileSize) {
+          logger.info(`Resuming previous upload for ${fileName}`);
+          upload.resumeUpload(prev[0]);
+        } else {
+          logger.info(`File changed since last upload attempt for ${fileName}, starting fresh`);
+          upload.start();
+        }
+      } else {
+        upload.start();
+      }
     });
   });
 }

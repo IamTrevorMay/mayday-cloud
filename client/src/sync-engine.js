@@ -25,13 +25,15 @@ class SyncEngine {
     // Health check with retry
     await this._healthCheck();
 
-    // Startup diff sync
+    // Startup diff sync completes before the watcher starts, so the watcher
+    // can't race with the startup scan writing to the same DB rows.
     await this._startupSync();
 
-    // Start live watcher
-    this._startWatcher();
-
-    logger.info('Sync engine running. Watching for changes...');
+    // Start live watcher only after startup sync is fully done
+    if (this.running) {
+      this._startWatcher();
+      logger.info('Sync engine running. Watching for changes...');
+    }
   }
 
   async stop() {
@@ -117,9 +119,25 @@ class SyncEngine {
   async _handleAddChange(relPath, fullPath) {
     if (!this.running) return;
 
+    let stat;
     try {
-      const stat = fs.statSync(fullPath);
+      stat = fs.statSync(fullPath);
+    } catch (err) {
+      // File was deleted between the watcher event and now — skip it
+      if (err.code === 'ENOENT') return;
+      logger.error(`Error stating file ${relPath}: ${err.message}`);
+      return;
+    }
 
+    // Skip if file is already synced and unchanged (avoids re-enqueuing
+    // files the watcher fires for right after startup sync processed them)
+    const existing = db.getFile(relPath);
+    if (existing && existing.status === 'synced' &&
+        existing.size === stat.size && existing.mtime_ms === stat.mtimeMs) {
+      return;
+    }
+
+    try {
       // Ensure remote directory exists
       const dir = path.dirname(relPath);
       if (dir && dir !== '.') {
