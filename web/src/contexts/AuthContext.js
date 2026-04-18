@@ -24,7 +24,19 @@ export function AuthProvider({ children }) {
       setLoading(false);
     });
 
-    return () => subscription.unsubscribe();
+    // Safety net: if neither onAuthStateChange nor getSession resolves
+    // within 5 seconds (e.g. network issues), stop blocking the UI.
+    const timeout = setTimeout(() => {
+      if (!authChangedRef.current) {
+        setSession(null);
+        setLoading(false);
+      }
+    }, 5000);
+
+    return () => {
+      clearTimeout(timeout);
+      subscription.unsubscribe();
+    };
   }, []);
 
   async function signInWithEmail(email) {
