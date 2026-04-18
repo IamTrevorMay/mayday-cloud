@@ -8,11 +8,9 @@ This file is the in-repo memory for the stabilization effort. It travels with co
 
 ## Current Focus
 
-**Phase 1 complete** (commit `dbdb861`). **Phase 2 complete** (2026-04-12). **Phase 3 complete** (commit `468dec3`). **Phase 4 complete** (commit `40ccd2b`). **Phase 5 complete** (commit `d6b5e44`).
+**Phases 1–6 complete.** All audit bugs resolved. Test system and observability in place.
 
-Phase 1 verified: signup persistence, existing login, Studio SSO, share link max_uses all passing.
-
-Next session picks up with **Phase 6 — Hardening & observability** (items 20–24 below).
+Next session picks up with **Phase 7 — Ongoing cadence** (items 25–27 below), or new feature work.
 
 ### Additional fix (2026-04-12)
 - Hidden files (dotfiles) were showing in the Drive listing. Fixed `api/src/routes/nas.js` to filter all entries starting with `.` at every directory level (previously only filtered `.trash`/`.thumbs`/`.tus-staging` at root).
@@ -52,7 +50,7 @@ Findings from a parallel codebase audit. All items verified against actual code 
 
 ### Medium
 
-- [ ] **CORS wide open** — `api/src/server.js` — tighten `origin: true` to a known allow-list (`www.mayday.systems`, localhost dev) before production hardening.
+- [x] **CORS wide open** — `api/src/server.js` — fixed in `4bb79bb`. Origin allow-list via `CORS_ORIGINS` env var.
 
 - [x] **Sync client: scanner swallows errors silently** — `client/src/scanner.js` — fixed in `40ccd2b`. Permission errors and stat failures now logged as warnings with affected path.
 
@@ -127,18 +125,19 @@ Catch the race-condition class of bugs.
 
 **Exit criteria:** race-condition bugs are reproducibly caught by e2e, not just unit tests.
 
-### Phase 6 — Hardening & observability ← NEXT
-~1-2 days spread out.
+### Phase 6 — Hardening & observability ✓ COMPLETE (commit `4bb79bb`)
 
-20. CORS origin allow-list
-21. Structured API logging (`{ route, method, user_id, status, duration_ms, error }`)
-22. React error boundary posting to `/api/errors`
-23. `/admin/health` page (API, NAS, disk, user count, active shares)
-24. Weekly scheduled smoke run against production
+20. [x] CORS origin allow-list — defaults to `www.mayday.systems` + `localhost:3000`, configurable via `CORS_ORIGINS` env
+21. [x] Structured API logging — JSON per request: `{ method, route, status, duration_ms, user_id }`
+22. [x] React error boundary — wraps app, posts crashes to `/api/errors`, shows reload button
+23. [x] `/api/admin/health` — admin-only: API, NAS, disk usage, user count, active shares, active API keys
+24. [x] Weekly smoke run — `.github/workflows/weekly-smoke.yml`, Monday 9am UTC, requires `PRODUCTION_API_URL` repo variable
 
 **Exit criteria:** production issues are visible before users report them.
 
-### Phase 7 — Ongoing cadence
+**Deploy notes:** API needs `pm2 restart`. Set `CORS_ORIGINS` in `.env` if production origin differs. Set `PRODUCTION_API_URL` as a GitHub repo variable to enable the weekly smoke run.
+
+### Phase 7 — Ongoing cadence ← NEXT
 
 25. Optional pre-push hook (smoke + unit tests)
 26. Monthly audit day — re-run the parallel bug-audit pattern
