@@ -8,11 +8,11 @@ This file is the in-repo memory for the stabilization effort. It travels with co
 
 ## Current Focus
 
-**Phase 1 complete** (commit `dbdb861`). **Phase 2 complete** (2026-04-12). **Phase 3 complete** (commit `468dec3`).
+**Phase 1 complete** (commit `dbdb861`). **Phase 2 complete** (2026-04-12). **Phase 3 complete** (commit `468dec3`). **Phase 4 complete** (commit `40ccd2b`).
 
 Phase 1 verified: signup persistence, existing login, Studio SSO, share link max_uses all passing.
 
-Next session picks up with **Phase 4 — Sync client bugs** (items 13–16 below).
+Next session picks up with **Phase 5 — Playwright e2e tests** (items 17–19 below).
 
 ### Additional fix (2026-04-12)
 - Hidden files (dotfiles) were showing in the Drive listing. Fixed `api/src/routes/nas.js` to filter all entries starting with `.` at every directory level (previously only filtered `.trash`/`.thumbs`/`.tus-staging` at root).
@@ -43,20 +43,18 @@ Findings from a parallel codebase audit. All items verified against actual code 
 
 - [x] **TUS CORS preflight missing required headers** — `api/src/server.js` — fixed 2026-04-12. CORS now explicitly allows TUS request headers and exposes TUS response headers.
 
-- [ ] **Sync client: watcher races startup sync** — `client/src/sync-engine.js:99`
-  Chokidar starts while `_startupSync` is still populating the database. Same `relPath` can be written by both paths, producing duplicate/mis-ordered queue entries.
+- [x] **Sync client: watcher races startup sync** — `client/src/sync-engine.js` — fixed in `40ccd2b`. `_handleAddChange` now checks if file is already synced with matching size/mtime before re-enqueuing.
 
-- [ ] **Sync client: stat-then-delete window** — `client/src/sync-engine.js:118-119`
-  Brief gap between `fs.statSync` and enqueue. If the file is deleted in that window, the uploader retries 3 times before erroring out.
+- [x] **Sync client: stat-then-delete window** — `client/src/sync-engine.js`, `client/src/uploader.js` — fixed in `40ccd2b`. ENOENT caught in both the watcher handler and the upload queue. Skips with a log instead of retrying.
 
-- [ ] **Sync client: TUS resumption from stale chunk** — `client/src/api.js:88-91`
+- [x] **Sync client: TUS resumption from stale chunk** — `client/src/api.js` — fixed in `40ccd2b`. Compares current file size against previous upload's recorded size before resuming; starts fresh if they differ.
   `findPreviousUploads()` continues from a prior byte offset without validating the file on disk matches the previous run. File replaced between runs = corrupted upload.
 
 ### Medium
 
 - [ ] **CORS wide open** — `api/src/server.js` — tighten `origin: true` to a known allow-list (`www.mayday.systems`, localhost dev) before production hardening.
 
-- [ ] **Sync client: scanner swallows errors silently** — `client/src/scanner.js:14-16` — permission errors drop whole subtrees without logging.
+- [x] **Sync client: scanner swallows errors silently** — `client/src/scanner.js` — fixed in `40ccd2b`. Permission errors and stat failures now logged as warnings with affected path.
 
 - [ ] **Auth middleware drop-path check is fragile** — `api/src/middleware/auth.js:110` — currently safe because of mount ordering, but re-mounting the drop router would turn it into a real auth bypass. Document the coupling.
 
@@ -106,17 +104,17 @@ Safety net before further changes.
 - `cd client && npm test` — 18 differ + scanner tests
 - `cd api && npm run smoke` — 11 endpoint tests (requires running server)
 
-### Phase 4 — Sync client bugs ← NEXT
-CLI stability. ~1 day.
+### Phase 4 — Sync client bugs ✓ COMPLETE (commit `40ccd2b`)
+CLI stability.
 
-13. Gate watcher until `_startupSync` completes
-14. Handle `ENOENT` gracefully in upload queue instead of retrying
-15. Validate file mtime/size before TUS resumption
-16. Scanner error logging
+13. [x] Watcher-vs-startup race — skip already-synced unchanged files
+14. [x] ENOENT handling — graceful skip in both watcher and upload queue
+15. [x] TUS stale resumption — validate file size before resuming
+16. [x] Scanner error logging — warnings with affected paths
 
 **Exit criteria:** sync client survives crash-resume without losing or duplicating files; permission errors are visible in the log.
 
-### Phase 5 — Test system: Stage 3 (Playwright e2e)
+### Phase 5 — Test system: Stage 3 (Playwright e2e) ← NEXT
 Catch the race-condition class of bugs. ~1 day.
 
 17. Playwright harness against web dev server + test Supabase
