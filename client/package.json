@@ -6,7 +6,8 @@
     "mayday-cloud": "./bin/mayday-cloud.js"
   },
   "scripts": {
-    "start": "node bin/mayday-cloud.js sync"
+    "start": "node bin/mayday-cloud.js sync",
+    "test": "vitest run"
   },
   "dependencies": {
     "better-sqlite3": "^11.0.0",
@@ -14,5 +15,8 @@
     "commander": "^12.0.0",
     "inquirer": "^8.2.6",
     "tus-js-client": "^4.3.1"
+  },
+  "devDependencies": {
+    "vitest": "^4.1.4"
   }
 }

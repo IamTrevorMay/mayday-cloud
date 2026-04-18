@@ -4,7 +4,9 @@
   "private": true,
   "scripts": {
     "dev": "nodemon src/server.js",
-    "start": "node src/server.js"
+    "start": "node src/server.js",
+    "smoke": "node scripts/smoke.js",
+    "test": "vitest run"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.39.0",
@@ -19,6 +21,7 @@
     "sharp": "^0.34.5"
   },
   "devDependencies": {
-    "nodemon": "^3.0.2"
+    "nodemon": "^3.0.2",
+    "vitest": "^4.1.4"
   }
 }

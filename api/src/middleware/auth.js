@@ -5,7 +5,10 @@ const { createClient } = require('@supabase/supabase-js');
 let cachedKey = null;
 
 function getSupabase() {
-  return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
+  return (module.exports._supabaseFactory || createClient)(
+    process.env.SUPABASE_URL,
+    process.env.SUPABASE_SERVICE_ROLE_KEY,
+  );
 }
 
 async function getJwtKey() {
