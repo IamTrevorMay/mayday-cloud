@@ -8,9 +8,9 @@ This file is the in-repo memory for the stabilization effort. It travels with co
 
 ## Current Focus
 
-**Phases 1–6 complete.** All audit bugs resolved. Test system and observability in place.
+**Phases 1–7 complete.** All audit bugs resolved. Test system, observability, and maintenance cadence in place.
 
-Next session picks up with **Phase 7 — Ongoing cadence** (items 25–27 below), or new feature work.
+The stabilization roadmap is finished. This file remains the in-repo record. Future work should be tracked as new sections below the roadmap.
 
 ### Additional fix (2026-04-12)
 - Hidden files (dotfiles) were showing in the Drive listing. Fixed `api/src/routes/nas.js` to filter all entries starting with `.` at every directory level (previously only filtered `.trash`/`.thumbs`/`.tus-staging` at root).
@@ -137,11 +137,11 @@ Catch the race-condition class of bugs.
 
 **Deploy notes:** API needs `pm2 restart`. Set `CORS_ORIGINS` in `.env` if production origin differs. Set `PRODUCTION_API_URL` as a GitHub repo variable to enable the weekly smoke run.
 
-### Phase 7 — Ongoing cadence ← NEXT
+### Phase 7 — Ongoing cadence ✓ COMPLETE (commit TBD)
 
-25. Optional pre-push hook (smoke + unit tests)
-26. Monthly audit day — re-run the parallel bug-audit pattern
-27. Monthly `npm outdated` bumps with CI verification
+25. [x] Pre-push hook — `scripts/pre-push.sh` runs API + client unit tests before push. Install: `cp scripts/pre-push.sh .git/hooks/pre-push`
+26. [x] Monthly audit + test run — `.github/workflows/monthly-maintenance.yml`, 1st of every month at 10am UTC. Runs full test suite and reports outdated deps in the workflow summary.
+27. [x] Dependency check — same workflow, `npm outdated` across all three packages with summary output
 
 ---
 

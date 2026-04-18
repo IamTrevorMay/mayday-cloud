@@ -1,0 +1,58 @@
+name: Monthly maintenance
+
+on:
+  schedule:
+    # First of every month at 10am UTC
+    - cron: '0 10 1 * *'
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  dependency-check:
+    name: Check outdated dependencies
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        dir: [api, client, web]
+    defaults:
+      run:
+        working-directory: ${{ matrix.dir }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - name: Check for outdated packages
+        run: |
+          echo "## ${{ matrix.dir }} — outdated packages" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          npm outdated || true
+          npm outdated >> $GITHUB_STEP_SUMMARY 2>&1 || echo "All up to date" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+  full-test-suite:
+    name: Full test suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: API tests
+        working-directory: api
+        run: npm ci && npx vitest run
+
+      - name: Client tests
+        working-directory: client
+        run: npm ci && npx vitest run
+
+      - name: Web build
+        working-directory: web
+        run: npm ci && npm run build
+
+      - name: E2e tests
+        working-directory: web
+        run: |
+          npx playwright install --with-deps chromium
+          npx playwright test
