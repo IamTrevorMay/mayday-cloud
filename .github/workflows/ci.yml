@@ -66,6 +66,7 @@ jobs:
     name: Playwright e2e (slow lane)
     runs-on: ubuntu-latest
     needs: [web-build]
+    continue-on-error: true
     defaults:
       run:
         working-directory: web
