@@ -14,9 +14,11 @@ const MAX_CONCURRENCY = 3;
  */
 async function scanRemote(config, syncFolders, remoteFolder) {
   const results = [];
+  // API expects relative paths (empty string for root, not '/')
+  const apiRoot = (remoteFolder === '/') ? '' : remoteFolder;
   const roots = syncFolders.length > 0
-    ? syncFolders.map(f => path.posix.join(remoteFolder, f))
-    : [remoteFolder];
+    ? syncFolders.map(f => apiRoot ? path.posix.join(apiRoot, f) : f)
+    : [apiRoot];
 
   const dirQueue = roots.map((r, i) => ({
     remotePath: r,

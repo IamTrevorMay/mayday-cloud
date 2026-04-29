@@ -169,9 +169,9 @@ function diffBidirectional(localFiles, remoteFiles, baseFiles) {
 }
 
 function _changed(current, base) {
-  if (current.size !== base.size) return true;
-  if (Math.abs(current.mtimeMs - base.mtimeMs) > MTIME_TOLERANCE_MS) return true;
-  return false;
+  // Size-only comparison: mtime is unreliable because local and remote
+  // filesystems assign different timestamps for the same content.
+  return current.size !== base.size;
 }
 
 function _resolveConflict(relPath, local, remote, toUpload, toDownload, remoteDirs, localDirs) {

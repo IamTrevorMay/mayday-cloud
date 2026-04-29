@@ -21,8 +21,8 @@ class DownloadQueue {
     this._drainResolve = null;
   }
 
-  enqueue(relPath, size) {
-    this.queue.push({ relPath, size, attempt: 0 });
+  enqueue(relPath, size, remoteMtimeMs) {
+    this.queue.push({ relPath, size, remoteMtimeMs, attempt: 0 });
     this._tick();
   }
 
@@ -62,7 +62,7 @@ class DownloadQueue {
   }
 
   async _processDownload(job) {
-    const { relPath, size } = job;
+    const { relPath, size, remoteMtimeMs } = job;
     const localPath = path.join(this.localFolder, relPath);
     const tmpPath = localPath + TMP_SUFFIX;
     const remotePath = path.posix.join(this.remoteFolder, relPath);
@@ -84,7 +84,13 @@ class DownloadQueue {
       // Atomic rename
       fs.renameSync(tmpPath, localPath);
 
-      // Update DB: mark base as synced with downloaded file's actual stats
+      // Preserve remote file's mtime so the differ sees local == remote == base
+      if (remoteMtimeMs) {
+        const mtime = new Date(remoteMtimeMs);
+        fs.utimesSync(localPath, mtime, mtime);
+      }
+
+      // Use the remote mtime as the base so all three snapshots agree
       const stat = fs.statSync(localPath);
       db.markBaseSynced(relPath, stat.size, stat.mtimeMs);
       db.logAction(relPath, 'download', `${stat.size} bytes`);

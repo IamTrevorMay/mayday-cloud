@@ -23,7 +23,12 @@ function setup(tray, mb, { pause, resume, preferences } = {}) {
   onResume = resume || null;
   onPreferences = preferences || null;
   setState('idle');
-  updateContextMenu();
+
+  // Show context menu only on right-click so left-click toggles the menubar window
+  trayInstance.on('right-click', () => {
+    const contextMenu = buildContextMenu();
+    trayInstance.popUpContextMenu(contextMenu);
+  });
 }
 
 function setState(state) {
@@ -31,15 +36,12 @@ function setState(state) {
   if (!trayInstance) return;
 
   trayInstance.setToolTip(TOOLTIPS[state] || 'Mayday Cloud');
-  updateContextMenu();
 }
 
-function updateContextMenu() {
-  if (!trayInstance) return;
-
+function buildContextMenu() {
   const isPaused = currentState === 'paused';
 
-  const contextMenu = Menu.buildFromTemplate([
+  return Menu.buildFromTemplate([
     {
       label: 'Open Mayday Cloud Folder',
       click: () => {
@@ -76,8 +78,6 @@ function updateContextMenu() {
       },
     },
   ]);
-
-  trayInstance.setContextMenu(contextMenu);
 }
 
 module.exports = { setup, setState };

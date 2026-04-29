@@ -16,7 +16,9 @@ class SyncEngine {
   constructor(config) {
     this.config = config;
     this.localFolder = config.localFolder;
-    this.remoteFolder = config.remoteFolder || '/';
+    // API expects relative paths — '/' must become '' to avoid path.posix.join producing absolute paths
+    const rf = config.remoteFolder || '/';
+    this.remoteFolder = (rf === '/') ? '' : rf;
     this.syncMode = config.syncMode || 'upload-only';
     this.syncFolders = config.syncFolders || [];
 
@@ -200,7 +202,7 @@ class SyncEngine {
 
       // 7. Enqueue downloads
       for (const file of result.toDownload) {
-        this.downloadQueue.enqueue(file.relPath, file.size);
+        this.downloadQueue.enqueue(file.relPath, file.size, file.mtimeMs);
       }
 
       // 8. Enqueue local deletes

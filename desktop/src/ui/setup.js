@@ -161,7 +161,7 @@ async function loadRemoteFolders() {
 
   try {
     tree.innerHTML = '<div class="folder-tree-loading">Loading folders...</div>';
-    const items = await window.mayday.listRemote('/', getTempConfig());
+    const items = await window.mayday.listRemote('', getTempConfig());
     tree.innerHTML = '';
 
     if (!items || items.length === 0) {
@@ -178,7 +178,7 @@ async function loadRemoteFolders() {
     }
 
     for (const dir of dirs) {
-      tree.appendChild(createFolderNode(dir.name, '/' + dir.name));
+      tree.appendChild(createFolderNode(dir.name, dir.name));
     }
   } catch (err) {
     tree.innerHTML = `<div class="folder-tree-empty">Failed to load: ${err.message}</div>`;
