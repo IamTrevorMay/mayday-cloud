@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Mayday Cloud Setup</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="setup-container">
+    <div class="logo-section">
+      <div class="logo-icon">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+          <polyline points="17 8 12 3 7 8" />
+          <line x1="12" y1="3" x2="12" y2="15" />
+        </svg>
+      </div>
+      <div class="logo-text">Mayday Cloud</div>
+      <div class="tagline">Desktop Sync Setup</div>
+    </div>
+
+    <!-- Step 1: Login -->
+    <div id="step-login" class="step active">
+      <div class="step-title">Sign in to your account</div>
+      <div class="step-desc">Use the email and password for your Mayday Cloud account.</div>
+      <div class="form-group">
+        <input type="email" id="login-email" placeholder="you@email.com" autofocus>
+        <input type="password" id="login-password" placeholder="Password">
+        <button class="btn" id="login-btn">Sign In</button>
+        <div id="login-error" class="error-msg" style="display:none"></div>
+      </div>
+      <div class="divider"><span>or</span></div>
+      <button class="btn btn-studio" id="show-studio-btn">Sign in with Mayday Studio</button>
+    </div>
+
+    <!-- Step 1b: Studio Login -->
+    <div id="step-studio" class="step">
+      <div class="step-title">Sign in with Mayday Studio</div>
+      <div class="step-desc">Use your Mayday Studio email and password.</div>
+      <div class="form-group">
+        <input type="email" id="studio-email" placeholder="Studio email">
+        <input type="password" id="studio-password" placeholder="Studio password">
+        <button class="btn btn-studio" id="studio-login-btn">Sign in with Studio</button>
+        <div id="studio-error" class="error-msg" style="display:none"></div>
+      </div>
+      <a href="#" class="back-link" id="back-to-cloud">Back to Cloud sign in</a>
+    </div>
+
+    <!-- Step 2: Choose folder -->
+    <div id="step-folder" class="step">
+      <div class="step-title">Choose sync folder</div>
+      <div class="step-desc">Pick a folder on your Mac. Everything in it will sync to Mayday Cloud.</div>
+      <div class="form-group">
+        <div class="folder-picker">
+          <input type="text" id="folder-path" readonly placeholder="~/Mayday Cloud">
+          <button class="btn btn-secondary" id="pick-folder-btn">Browse</button>
+        </div>
+        <button class="btn" id="next-to-remote-btn">Next</button>
+        <div id="folder-error" class="error-msg" style="display:none"></div>
+      </div>
+    </div>
+
+    <!-- Step 3: Select remote folders -->
+    <div id="step-remote-folders" class="step">
+      <div class="step-title">Select cloud folders</div>
+      <div class="step-desc">Choose which cloud folders to sync. Changes on either side will be kept in sync.</div>
+
+      <label class="checkbox-row">
+        <input type="checkbox" id="sync-all-check" checked>
+        <span>Sync everything</span>
+      </label>
+
+      <div id="folder-tree-container" class="folder-tree-container" style="display:none">
+        <div id="folder-tree" class="folder-tree">
+          <div class="folder-tree-loading">Loading folders...</div>
+        </div>
+      </div>
+
+      <button class="btn" id="start-sync-btn">Start Syncing</button>
+      <div id="remote-error" class="error-msg" style="display:none"></div>
+    </div>
+
+    <!-- Step 4: Done -->
+    <div id="step-done" class="step">
+      <div style="text-align:center; padding-top: 40px;">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M22 11.08V12a10 10 0 11-5.93-9.14" />
+          <polyline points="22 4 12 14.01 9 11.01" />
+        </svg>
+        <div style="font-size:18px; font-weight:600; margin-top:16px;">You're all set!</div>
+        <div style="font-size:13px; color:rgba(255,255,255,0.5); margin-top:8px; line-height:1.4;">
+          Mayday Cloud is syncing your files.<br>
+          Look for the icon in your menu bar.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="setup.js"></script>
+</body>
+</html>

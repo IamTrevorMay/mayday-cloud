@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Mayday Cloud Preferences</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="setup-container">
+    <div class="logo-section">
+      <div class="logo-icon">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="3" />
+          <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" />
+        </svg>
+      </div>
+      <div class="logo-text">Preferences</div>
+      <div class="tagline">Manage sync folder selections</div>
+    </div>
+
+    <div class="step active">
+      <div class="step-title">Cloud folders to sync</div>
+      <div class="step-desc">Changes take effect immediately. Local files from deselected folders remain on disk but stop syncing.</div>
+
+      <label class="checkbox-row">
+        <input type="checkbox" id="sync-all-check">
+        <span>Sync everything</span>
+      </label>
+
+      <div id="folder-tree-container" class="folder-tree-container">
+        <div id="folder-tree" class="folder-tree">
+          <div class="folder-tree-loading">Loading folders...</div>
+        </div>
+      </div>
+
+      <button class="btn" id="save-btn">Save</button>
+      <div id="save-status" class="error-msg" style="display:none"></div>
+    </div>
+  </div>
+
+  <script src="preferences.js"></script>
+</body>
+</html>
