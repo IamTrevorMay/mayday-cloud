@@ -11,6 +11,7 @@ Personal cloud storage platform backed by a 60TB Yotamaster NAS rack.
 - **Auth/DB**: Supabase (separate project from Studio Hub)
 - **Storage**: Yotamaster NAS via USB-C, mounted at `/Volumes/May Server`
 - **Client**: Node.js CLI for desktop folder sync
+- **Desktop**: Electron menubar app (`desktop/`), packaged as universal signed/notarized DMG. See [desktop/RELEASE.md](./desktop/RELEASE.md) for build pipeline, signing secrets, and release procedure.
 
 ## Project Structure
 
@@ -18,6 +19,7 @@ Personal cloud storage platform backed by a 60TB Yotamaster NAS rack.
 web/          React SPA (dark theme, inline styles, DM Sans font)
 api/          Express API server
 client/       Desktop sync CLI (mayday-cloud init/sync/status)
+desktop/      Electron menubar app — distributable via GitHub Releases
 supabase/     Migration files
 ```
 
@@ -62,3 +64,4 @@ See `api/.env.example` and `web/.env.example` for required config.
 
 - **Web**: Push to main -> Vercel auto-deploys
 - **API**: `pm2 start api/src/server.js --name mayday-cloud-api`
+- **Desktop**: Push tag `desktop-v*` -> GitHub Actions builds, signs, notarizes, and publishes the universal DMG to GitHub Releases. See [desktop/RELEASE.md](./desktop/RELEASE.md).

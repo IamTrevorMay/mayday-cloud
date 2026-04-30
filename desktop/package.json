@@ -1,0 +1,74 @@
+{
+  "name": "mayday-cloud-desktop",
+  "version": "0.1.0",
+  "description": "Mayday Cloud desktop sync app",
+  "main": "src/main.js",
+  "author": "Mayday Studio",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --mac --universal --publish never",
+    "release": "electron-builder --mac --universal --publish always"
+  },
+  "dependencies": {
+    "chokidar": "^3.6.0",
+    "electron-updater": "^6.3.9",
+    "menubar": "^9.5.1",
+    "sql.js": "^1.11.0",
+    "tus-js-client": "^4.1.0"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "systems.mayday.cloud",
+    "productName": "Mayday Cloud",
+    "copyright": "Copyright © 2026 Mayday Studio",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "node_modules/sql.js/dist/sql-wasm.wasm",
+        "to": "sql-wasm.wasm"
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "icon": "assets/icon.icns",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["universal"]
+        }
+      ],
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "notarize": true
+    },
+    "dmg": {
+      "title": "Mayday Cloud ${version}",
+      "contents": [
+        { "x": 130, "y": 220, "type": "file" },
+        { "x": 410, "y": 220, "type": "link", "path": "/Applications" }
+      ]
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "IamTrevorMay",
+        "repo": "mayday-cloud"
+      }
+    ]
+  }
+}

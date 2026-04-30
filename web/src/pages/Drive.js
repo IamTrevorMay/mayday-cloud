@@ -1604,6 +1604,10 @@ function SettingsView({ user, storageInfo, signOut, apiKeys, apiKeysLoading, sho
 }
 
 // ─── Sidebar ───
+const DESKTOP_RELEASE_API = 'https://api.github.com/repos/IamTrevorMay/mayday-cloud/releases/latest';
+const DESKTOP_RELEASE_CACHE_KEY = 'maydaycloud.desktopRelease';
+const DESKTOP_RELEASE_CACHE_TTL_MS = 60 * 60 * 1000;
+
 function Sidebar({ user, activeView, onNavigate }) {
   const navItems = [
     { key: 'files', label: 'My Files', icon: 'M3 3h7l2 2h6a1 1 0 011 1v10a1 1 0 01-1 1H3a1 1 0 01-1-1V4a1 1 0 011-1z' },
@@ -1611,6 +1615,36 @@ function Sidebar({ user, activeView, onNavigate }) {
     { key: 'shared', label: 'Shared Links', icon: 'M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71' },
     { key: 'trash', label: 'Trash', icon: 'M3 6h18M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6M10 11v6M14 11v6M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2' },
   ];
+
+  const [desktopRelease, setDesktopRelease] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    try {
+      const cached = JSON.parse(localStorage.getItem(DESKTOP_RELEASE_CACHE_KEY) || 'null');
+      if (cached && Date.now() - cached.fetchedAt < DESKTOP_RELEASE_CACHE_TTL_MS) {
+        setDesktopRelease(cached.release);
+        return;
+      }
+    } catch {}
+
+    fetch(DESKTOP_RELEASE_API)
+      .then(r => (r.ok ? r.json() : null))
+      .then(data => {
+        if (cancelled || !data) return;
+        const dmg = (data.assets || []).find(a => a.name && a.name.endsWith('.dmg'));
+        if (!dmg) return;
+        const release = { version: data.tag_name, url: dmg.browser_download_url };
+        setDesktopRelease(release);
+        try {
+          localStorage.setItem(DESKTOP_RELEASE_CACHE_KEY, JSON.stringify({ release, fetchedAt: Date.now() }));
+        } catch {}
+      })
+      .catch(() => {});
+
+    return () => { cancelled = true; };
+  }, []);
 
   return (
     <div style={s.sidebar}>
@@ -1638,6 +1672,21 @@ function Sidebar({ user, activeView, onNavigate }) {
       </nav>
       {/* Settings pinned above footer */}
       <div style={{ marginTop: 'auto', padding: '0 8px' }}>
+        {desktopRelease && (
+          <button
+            onClick={() => window.open(desktopRelease.url, '_blank', 'noopener')}
+            style={{ ...s.sidebarItem, marginBottom: '4px', flexWrap: 'wrap' }}
+            title={`Download Mayday Cloud ${desktopRelease.version} for Mac`}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+              <polyline points="7 10 12 15 17 10" />
+              <line x1="12" y1="15" x2="12" y2="3" />
+            </svg>
+            <span>Download for Mac</span>
+            <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.4)', marginLeft: 'auto' }}>{desktopRelease.version}</span>
+          </button>
+        )}
         <button
           onClick={() => onNavigate('settings')}
           style={{ ...s.sidebarItem, ...(activeView === 'settings' ? s.sidebarItemActive : {}), marginBottom: '8px' }}
