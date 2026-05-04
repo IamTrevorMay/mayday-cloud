@@ -35,6 +35,40 @@
 
       <button class="btn" id="save-btn">Save</button>
       <div id="save-status" class="error-msg" style="display:none"></div>
+
+      <!-- Virtual Drive Mount Settings -->
+      <div style="margin-top:20px">
+        <div class="section-divider"></div>
+        <div class="step-title">Virtual Drive</div>
+        <div class="step-desc">Mount your cloud storage as a local drive for Premiere Pro and other apps.</div>
+
+        <div id="mount-deps-info" style="margin-bottom:10px"></div>
+
+        <div class="form-group" style="gap:8px">
+          <label style="font-size:12px;color:rgba(255,255,255,0.5)">Mount point</label>
+          <div class="folder-picker">
+            <input type="text" id="mount-point-input" placeholder="/Volumes/Mayday Cloud">
+            <button class="btn btn-secondary" id="mount-pick-btn" style="width:auto;padding:8px 12px;font-size:12px">Browse</button>
+          </div>
+
+          <label style="font-size:12px;color:rgba(255,255,255,0.5);margin-top:6px">Cache size</label>
+          <select id="mount-cache-select" style="width:100%;padding:8px 12px;border:1px solid rgba(255,255,255,0.12);border-radius:8px;background:rgba(255,255,255,0.04);color:#e2e8f0;font-size:14px;font-family:inherit;-webkit-app-region:no-drag">
+            <option value="10G">10 GB</option>
+            <option value="25G">25 GB</option>
+            <option value="50G" selected>50 GB</option>
+            <option value="100G">100 GB</option>
+            <option value="200G">200 GB</option>
+          </select>
+
+          <label class="checkbox-row" style="margin-top:6px">
+            <input type="checkbox" id="mount-autostart-check">
+            <span>Auto-mount on launch</span>
+          </label>
+
+          <button class="btn" id="mount-save-btn" style="margin-top:8px">Save Mount Settings</button>
+          <div id="mount-save-status" class="error-msg" style="display:none"></div>
+        </div>
+      </div>
     </div>
   </div>
 

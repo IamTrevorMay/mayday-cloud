@@ -43,6 +43,20 @@
       <button class="btn btn-secondary" id="open-folder-btn" style="flex:1">Open Folder</button>
       <button class="btn" id="pause-btn" style="flex:1">Pause</button>
     </div>
+
+    <!-- Virtual Drive Mount -->
+    <div class="mount-section">
+      <div class="section-divider"></div>
+      <div class="mount-header">
+        <div>
+          <div id="mount-dot" class="status-dot" style="display:inline-block;vertical-align:middle;margin-right:6px"></div>
+          <span class="mount-title">Virtual Drive</span>
+        </div>
+        <button class="btn mount-toggle-btn" id="mount-toggle-btn" style="width:auto;padding:6px 14px;font-size:12px">Mount</button>
+      </div>
+      <div id="mount-status-text" class="mount-status-text"></div>
+      <div id="mount-deps-warning" class="mount-deps-warning" style="display:none"></div>
+    </div>
   </div>
 
   <script src="status.js"></script>

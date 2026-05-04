@@ -8,6 +8,9 @@ const db = require('./sync/db');
 const logger = require('./sync/logger');
 const tray = require('./tray');
 const auth = require('./auth');
+const { MountManager } = require('./mount/mount-manager');
+const rclone = require('./mount/rclone');
+const fuseCheck = require('./mount/fuse-check');
 
 // Single instance lock
 const gotLock = app.requestSingleInstanceLock();
@@ -24,6 +27,7 @@ let mb = null;
 let syncEngine = null;
 let setupWindow = null;
 let prefsWindow = null;
+const mountManager = new MountManager();
 
 function getIcon() {
   const assetsDir = path.join(__dirname, '..', 'assets');
@@ -91,6 +95,10 @@ function createMenubar() {
       showSetup();
     } else {
       startSync(cfg);
+      // Auto-start mount if enabled
+      if (cfg.mountEnabled && cfg.mountAutoStart) {
+        autoStartMount(cfg);
+      }
     }
   });
 
@@ -158,6 +166,41 @@ async function stopSync() {
   }
   db.close();
 }
+
+// ─── Mount management ───
+
+async function autoStartMount(cfg) {
+  try {
+    const webdavUrl = cfg.apiUrl.replace(/\/$/, '') + '/api/webdav';
+    await mountManager.start({
+      apiUrl: webdavUrl,
+      apiKey: cfg.apiKey,
+      mountPoint: cfg.mountPoint,
+      cacheSize: cfg.mountCacheSize || '50G',
+      remotePath: cfg.mountRemotePath || '/',
+    });
+    logger.info(`Mount started at ${cfg.mountPoint}`);
+  } catch (err) {
+    logger.error('Mount auto-start failed:', err.message);
+  }
+}
+
+mountManager.on('stateChange', (state) => {
+  // Forward mount state changes to renderer
+  if (mb && mb.window && !mb.window.isDestroyed()) {
+    mb.window.webContents.send('mount:stateChange', state);
+  }
+});
+
+mountManager.on('log', (line) => {
+  logger.info(`[mount] ${line}`);
+});
+
+mountManager.on('fuseError', () => {
+  if (mb && mb.window && !mb.window.isDestroyed()) {
+    mb.window.webContents.send('mount:fuseError');
+  }
+});
 
 // ─── IPC Handlers ───
 
@@ -302,6 +345,105 @@ ipcMain.handle('open:preferences', () => {
   showPreferences();
 });
 
+// ─── Mount IPC Handlers ───
+
+ipcMain.handle('mount:checkDeps', () => {
+  const rcloneVersion = rclone.getVersion();
+  const rclonePath = rclone.findRclone();
+  const fuse = fuseCheck.checkFuse();
+  return {
+    rclone: {
+      installed: !!rclonePath,
+      version: rcloneVersion,
+      path: rclonePath,
+      installInstructions: rclone.getInstallInstructions(),
+    },
+    fuse,
+  };
+});
+
+ipcMain.handle('mount:start', async () => {
+  const cfg = config.load();
+  if (!cfg || !cfg.apiKey) {
+    return { success: false, error: 'Not configured — set up sync first' };
+  }
+  try {
+    const webdavUrl = cfg.apiUrl.replace(/\/$/, '') + '/api/webdav';
+    await mountManager.start({
+      apiUrl: webdavUrl,
+      apiKey: cfg.apiKey,
+      mountPoint: cfg.mountPoint,
+      cacheSize: cfg.mountCacheSize || '50G',
+      remotePath: cfg.mountRemotePath || '/',
+    });
+    // Persist mount enabled state
+    cfg.mountEnabled = true;
+    config.save(cfg);
+    return { success: true, mountPoint: cfg.mountPoint };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('mount:stop', async () => {
+  try {
+    await mountManager.stop();
+    const cfg = config.load();
+    if (cfg) {
+      cfg.mountEnabled = false;
+      config.save(cfg);
+    }
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('mount:status', () => {
+  const cfg = config.load();
+  return {
+    state: mountManager.state,
+    mounted: mountManager.mounted,
+    mountPoint: cfg?.mountPoint || null,
+    mountEnabled: cfg?.mountEnabled || false,
+    mountAutoStart: cfg?.mountAutoStart || false,
+  };
+});
+
+ipcMain.handle('mount:pickMountPoint', async () => {
+  if (process.platform === 'win32') {
+    // On Windows, let user type a drive letter
+    return null;
+  }
+  const result = await dialog.showOpenDialog({
+    properties: ['openDirectory', 'createDirectory'],
+    title: 'Choose Mount Point',
+    defaultPath: '/Volumes',
+  });
+  if (result.canceled) return null;
+  return result.filePaths[0];
+});
+
+ipcMain.handle('mount:updateConfig', async (_event, updates) => {
+  const cfg = config.load();
+  if (!cfg) return { success: false, error: 'Not configured' };
+
+  if (updates.mountPoint !== undefined) cfg.mountPoint = updates.mountPoint;
+  if (updates.mountCacheSize !== undefined) cfg.mountCacheSize = updates.mountCacheSize;
+  if (updates.mountAutoStart !== undefined) cfg.mountAutoStart = updates.mountAutoStart;
+  if (updates.mountRemotePath !== undefined) cfg.mountRemotePath = updates.mountRemotePath;
+
+  config.save(cfg);
+
+  // If mount is currently active and mount point changed, restart it
+  if (mountManager.mounted && updates.mountPoint !== undefined) {
+    await mountManager.stop();
+    await autoStartMount(cfg);
+  }
+
+  return { success: true };
+});
+
 function showPreferences() {
   if (prefsWindow && !prefsWindow.isDestroyed()) {
     prefsWindow.focus();
@@ -348,6 +490,7 @@ app.on('window-all-closed', (e) => {
 });
 
 app.on('before-quit', async () => {
+  await mountManager.stop();
   await stopSync();
 });
 

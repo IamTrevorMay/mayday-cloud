@@ -25,8 +25,22 @@ contextBridge.exposeInMainWorld('mayday', {
   openSetup: () => ipcRenderer.invoke('open:setup'),
   openPreferences: () => ipcRenderer.invoke('open:preferences'),
 
+  // Mount
+  mountCheckDeps: () => ipcRenderer.invoke('mount:checkDeps'),
+  mountStart: () => ipcRenderer.invoke('mount:start'),
+  mountStop: () => ipcRenderer.invoke('mount:stop'),
+  mountStatus: () => ipcRenderer.invoke('mount:status'),
+  mountPickMountPoint: () => ipcRenderer.invoke('mount:pickMountPoint'),
+  mountUpdateConfig: (updates) => ipcRenderer.invoke('mount:updateConfig', updates),
+
   // Status updates (push from main)
   onStatusUpdate: (callback) => {
     ipcRenderer.on('sync:statusUpdate', (_event, status) => callback(status));
+  },
+  onMountStateChange: (callback) => {
+    ipcRenderer.on('mount:stateChange', (_event, state) => callback(state));
+  },
+  onMountFuseError: (callback) => {
+    ipcRenderer.on('mount:fuseError', () => callback());
   },
 });

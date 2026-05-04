@@ -6,7 +6,9 @@ const path = require('path');
 const fs = require('fs');
 const { Server: TusServer } = require('@tus/server');
 const { FileStore } = require('@tus/file-store');
+const webdav = require('webdav-server').v2;
 const { authMiddleware, verifyToken, requireRole } = require('./middleware/auth');
+const { createWebDAVServer } = require('./webdav/server');
 const nasRouter = require('./routes/nas');
 const sharesRouter = require('./routes/shares');
 const keysRouter = require('./routes/keys');
@@ -49,7 +51,10 @@ app.use(cors({
 app.use(express.json());
 
 // ─── Rate limiting ───
-const globalLimiter = rateLimit({ windowMs: 60 * 1000, max: 100, standardHeaders: true, legacyHeaders: false });
+const globalLimiter = rateLimit({
+  windowMs: 60 * 1000, max: 100, standardHeaders: true, legacyHeaders: false,
+  skip: (req) => req.originalUrl.startsWith('/api/webdav'),
+});
 const authLimiter = rateLimit({ windowMs: 60 * 1000, max: 10, standardHeaders: true, legacyHeaders: false, message: { error: 'Too many attempts, try again later' } });
 const dropUploadLimiter = rateLimit({ windowMs: 60 * 1000, max: 5, standardHeaders: true, legacyHeaders: false, message: { error: 'Upload rate limit exceeded' } });
 
@@ -156,6 +161,23 @@ app.post('/api/errors', (req, res) => {
 // Tus endpoint — handles its own auth in onUploadCreate
 app.all('/api/nas/tus', (req, res) => tusServer.handle(req, res));
 app.all('/api/nas/tus/*', (req, res) => tusServer.handle(req, res));
+
+// ─── WebDAV endpoint — handles its own auth via HTTP Basic ───
+const webdavServer = createWebDAVServer(ASSETS_ROOT);
+webdavServer.afterRequest((ctx, next) => {
+  // Log WebDAV requests at the same level as other routes
+  const log = {
+    method: ctx.request.method,
+    route: ctx.requested.uri,
+    status: ctx.response.statusCode,
+    user_id: ctx.user?._maydayUser?.id || null,
+  };
+  if (ctx.response.statusCode >= 400) {
+    console.error('[webdav]', JSON.stringify(log));
+  }
+  next();
+});
+app.use(webdav.extensions.express('/api/webdav', webdavServer));
 
 // Protected routes — require valid Supabase JWT or API key
 app.use('/api', authMiddleware);

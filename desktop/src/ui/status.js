@@ -102,3 +102,111 @@ $('#pause-btn').addEventListener('click', async () => {
   // Refresh after a tick
   setTimeout(refresh, 500);
 });
+
+// ─── Mount Section ───
+
+let mountBusy = false;
+
+function updateMountUI(status) {
+  const dot = $('#mount-dot');
+  const text = $('#mount-status-text');
+  const btn = $('#mount-toggle-btn');
+
+  switch (status.state) {
+    case 'mounted':
+      dot.className = 'status-dot idle';
+      text.textContent = status.mountPoint || 'Mounted';
+      btn.textContent = 'Unmount';
+      btn.disabled = false;
+      break;
+    case 'starting':
+      dot.className = 'status-dot syncing';
+      text.textContent = 'Connecting...';
+      btn.textContent = 'Unmount';
+      btn.disabled = true;
+      break;
+    case 'error':
+      dot.className = 'status-dot error';
+      text.textContent = 'Mount error';
+      btn.textContent = 'Retry';
+      btn.disabled = false;
+      break;
+    default:
+      dot.className = 'status-dot';
+      dot.style.background = 'rgba(255,255,255,0.2)';
+      text.textContent = 'Not mounted';
+      btn.textContent = 'Mount';
+      btn.disabled = false;
+  }
+}
+
+async function refreshMount() {
+  try {
+    const status = await window.mayday.mountStatus();
+    updateMountUI(status);
+  } catch {
+    // Mount API not available (older main process)
+  }
+}
+
+async function checkMountDeps() {
+  try {
+    const deps = await window.mayday.mountCheckDeps();
+    const warnings = [];
+    if (!deps.rclone.installed) {
+      const inst = deps.rclone.installInstructions;
+      warnings.push('rclone not found. Install: ' + inst.methods.map(m => m.command || m.url).join(' or '));
+    }
+    if (!deps.fuse.installed) {
+      const inst = deps.fuse.installInstructions || [{ url: deps.fuse.installUrl }];
+      warnings.push('FUSE not found. Install: ' + inst.map(i => i.command || i.url).join(' or '));
+    }
+    const el = $('#mount-deps-warning');
+    if (warnings.length > 0) {
+      el.textContent = warnings.join('\n');
+      el.style.display = 'block';
+    } else {
+      el.style.display = 'none';
+    }
+    return deps.rclone.installed && deps.fuse.installed;
+  } catch {
+    return false;
+  }
+}
+
+$('#mount-toggle-btn').addEventListener('click', async () => {
+  if (mountBusy) return;
+  mountBusy = true;
+  const btn = $('#mount-toggle-btn');
+  btn.disabled = true;
+
+  try {
+    const status = await window.mayday.mountStatus();
+    if (status.state === 'mounted' || status.state === 'starting') {
+      await window.mayday.mountStop();
+    } else {
+      const depsOk = await checkMountDeps();
+      if (!depsOk) {
+        btn.disabled = false;
+        mountBusy = false;
+        return;
+      }
+      const result = await window.mayday.mountStart();
+      if (!result.success) {
+        $('#mount-status-text').textContent = result.error;
+        $('#mount-dot').className = 'status-dot error';
+      }
+    }
+  } finally {
+    mountBusy = false;
+    setTimeout(refreshMount, 500);
+  }
+});
+
+// Listen for mount state changes pushed from main
+if (window.mayday.onMountStateChange) {
+  window.mayday.onMountStateChange(() => refreshMount());
+}
+
+// Initial mount status
+refreshMount();

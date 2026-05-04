@@ -386,3 +386,55 @@ input:focus {
   font-size: 12px;
   padding: 8px 12px;
 }
+
+/* ─── Mount Section ─── */
+
+.mount-section {
+  margin-top: 4px;
+}
+
+.section-divider {
+  height: 1px;
+  background: rgba(255,255,255,0.08);
+  margin: 12px 0;
+}
+
+.mount-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.mount-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(255,255,255,0.4);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  vertical-align: middle;
+}
+
+.mount-toggle-btn {
+  font-size: 12px;
+}
+
+.mount-status-text {
+  font-size: 12px;
+  color: rgba(255,255,255,0.5);
+  margin-bottom: 4px;
+}
+
+.mount-deps-warning {
+  font-size: 11px;
+  color: #fbbf24;
+  padding: 6px 8px;
+  background: rgba(251,191,36,0.08);
+  border-radius: 6px;
+  margin-top: 6px;
+}
+
+.mount-deps-warning a {
+  color: #818cf8;
+  text-decoration: underline;
+}

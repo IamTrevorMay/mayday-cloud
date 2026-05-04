@@ -11,8 +11,8 @@ let currentSyncFolders = [];
   // We'll load the folder tree and check the appropriate boxes
   await loadRemoteFolders();
 
-  // Check "sync all" if no specific folders are configured
-  // (The main process will tell us via status, but we check the tree state)
+  // Load mount settings
+  await loadMountSettings();
 })();
 
 $('#sync-all-check').addEventListener('change', (e) => {
@@ -181,4 +181,81 @@ $('#save-btn').addEventListener('click', async () => {
 
   $('#save-btn').disabled = false;
   $('#save-btn').textContent = 'Save';
+});
+
+// ─── Mount Settings ───
+
+async function loadMountSettings() {
+  try {
+    const status = await window.mayday.mountStatus();
+    const input = $('#mount-point-input');
+    const cacheSelect = $('#mount-cache-select');
+    const autoCheck = $('#mount-autostart-check');
+
+    if (status.mountPoint) input.value = status.mountPoint;
+    if (status.mountAutoStart) autoCheck.checked = true;
+
+    // Check deps
+    const deps = await window.mayday.mountCheckDeps();
+    const depsEl = $('#mount-deps-info');
+    const parts = [];
+
+    if (deps.rclone.installed) {
+      parts.push(`rclone v${deps.rclone.version}`);
+    } else {
+      const methods = deps.rclone.installInstructions.methods;
+      parts.push(`<span style="color:#fbbf24">rclone not found</span> &mdash; ${methods.map(m => m.command || `<a href="${m.url}" style="color:#818cf8">${m.label}</a>`).join(' or ')}`);
+    }
+
+    if (deps.fuse.installed) {
+      parts.push(deps.fuse.name);
+    } else {
+      const insts = deps.fuse.installInstructions || [{ url: deps.fuse.installUrl, label: 'Download' }];
+      parts.push(`<span style="color:#fbbf24">FUSE not found</span> &mdash; ${insts.map(i => i.command || `<a href="${i.url}" style="color:#818cf8">${i.label}</a>`).join(' or ')}`);
+    }
+
+    depsEl.innerHTML = `<div style="font-size:11px;color:rgba(255,255,255,0.4);margin-bottom:4px">Dependencies: ${parts.join(' &bull; ')}</div>`;
+  } catch {
+    // Mount API not available
+  }
+}
+
+$('#mount-pick-btn').addEventListener('click', async () => {
+  const picked = await window.mayday.mountPickMountPoint();
+  if (picked) {
+    $('#mount-point-input').value = picked;
+  }
+});
+
+$('#mount-save-btn').addEventListener('click', async () => {
+  const statusEl = $('#mount-save-status');
+  const btn = $('#mount-save-btn');
+  btn.disabled = true;
+  btn.textContent = 'Saving...';
+
+  try {
+    const result = await window.mayday.mountUpdateConfig({
+      mountPoint: $('#mount-point-input').value,
+      mountCacheSize: $('#mount-cache-select').value,
+      mountAutoStart: $('#mount-autostart-check').checked,
+    });
+
+    if (result.success) {
+      statusEl.textContent = 'Mount settings saved.';
+      statusEl.style.display = 'block';
+      statusEl.style.color = '#4ade80';
+      setTimeout(() => { statusEl.style.display = 'none'; }, 3000);
+    } else {
+      statusEl.textContent = result.error || 'Failed to save';
+      statusEl.style.display = 'block';
+      statusEl.style.color = '#fca5a5';
+    }
+  } catch (err) {
+    statusEl.textContent = err.message;
+    statusEl.style.display = 'block';
+    statusEl.style.color = '#fca5a5';
+  }
+
+  btn.disabled = false;
+  btn.textContent = 'Save Mount Settings';
 });

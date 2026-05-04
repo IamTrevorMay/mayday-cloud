@@ -4,6 +4,12 @@ const path = require('path');
 const CONFIG_DIR = path.join(require('os').homedir(), '.mayday-cloud');
 const CONFIG_PATH = path.join(CONFIG_DIR, 'config.json');
 
+const DEFAULT_MOUNT_POINT = process.platform === 'darwin'
+  ? '/Volumes/Mayday Cloud'
+  : process.platform === 'win32'
+    ? 'M:'
+    : path.join(require('os').homedir(), 'mayday-cloud-mount');
+
 const DEFAULTS = {
   apiUrl: '',
   apiKey: '',
@@ -12,6 +18,12 @@ const DEFAULTS = {
   email: '',
   syncMode: 'upload-only',   // 'upload-only' | 'bidirectional'
   syncFolders: [],            // empty = sync everything under remoteFolder
+  // Virtual drive mount settings
+  mountEnabled: false,
+  mountPoint: DEFAULT_MOUNT_POINT,
+  mountCacheSize: '50G',
+  mountAutoStart: false,
+  mountRemotePath: '/',
 };
 
 function load() {
