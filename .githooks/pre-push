@@ -1,0 +1,3 @@
+#!/bin/sh
+npm test || exit 1
+node api/scripts/smoke.js http://localhost:4000 || echo "⚠ Smoke failed (API may not be running locally)"

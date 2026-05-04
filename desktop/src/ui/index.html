@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Mayday Cloud</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="status-container">
+    <div class="status-header">
+      <div id="status-dot" class="status-dot idle"></div>
+      <div>
+        <div id="status-text" class="status-text">All files synced</div>
+        <div id="status-sub" class="status-sub"></div>
+      </div>
+    </div>
+
+    <div class="counts">
+      <div class="count-item">
+        <div id="count-synced" class="count-value">0</div>
+        <div class="count-label">Synced</div>
+      </div>
+      <div class="count-item">
+        <div id="count-pending" class="count-value">0</div>
+        <div class="count-label">Pending</div>
+      </div>
+      <div class="count-item">
+        <div id="count-syncing" class="count-value">0</div>
+        <div class="count-label">Syncing</div>
+      </div>
+      <div class="count-item">
+        <div id="count-errors" class="count-value">0</div>
+        <div class="count-label">Errors</div>
+      </div>
+    </div>
+
+    <div class="recent-activity">
+      <div class="recent-title">Recent Activity</div>
+      <div id="log-list"></div>
+    </div>
+
+    <div class="actions">
+      <button class="btn btn-secondary" id="open-folder-btn" style="flex:1">Open Folder</button>
+      <button class="btn" id="pause-btn" style="flex:1">Pause</button>
+    </div>
+  </div>
+
+  <script src="status.js"></script>
+</body>
+</html>

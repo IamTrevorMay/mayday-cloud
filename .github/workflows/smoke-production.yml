@@ -1,0 +1,35 @@
+name: Production Smoke Test
+
+on:
+  schedule:
+    - cron: '0 9 * * 1' # Mondays 09:00 UTC
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Smoke test API endpoints
+        run: node api/scripts/smoke.js https://cloud-api.maydaystudio.net
+
+      - name: Check web frontend
+        run: |
+          status=$(curl -s -o /dev/null -w '%{http_code}' https://www.mayday.systems/)
+          echo "Web status: $status"
+          [ "$status" = "200" ] || exit 1
+
+      - name: Check API health
+        run: |
+          body=$(curl -sf https://cloud-api.maydaystudio.net/health)
+          echo "Health: $body"
+          echo "$body" | node -e "
+            const d = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
+            if (!d.ok) { console.error('Health check: ok is not true'); process.exit(1); }
+          "

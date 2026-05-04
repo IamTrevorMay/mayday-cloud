@@ -1,0 +1,15 @@
+{
+  "private": true,
+  "scripts": {
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "hooks:install": "git config core.hooksPath .githooks",
+    "outdated:check": "echo '=== Root ===' && npm outdated || true; echo '=== API ===' && cd api && npm outdated || true; echo '=== Web ===' && cd ../web && npm outdated || true; echo '=== Client ===' && cd ../client && npm outdated || true"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.59.1",
+    "serve": "^14.2.6",
+    "supertest": "^7.0",
+    "vitest": "^3.1"
+  }
+}
