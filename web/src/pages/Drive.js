@@ -1607,6 +1607,10 @@ function SettingsView({ user, storageInfo, signOut, apiKeys, apiKeysLoading, sho
 const DESKTOP_RELEASE_API = 'https://api.github.com/repos/IamTrevorMay/mayday-cloud/releases/latest';
 const DESKTOP_RELEASE_CACHE_KEY = 'maydaycloud.desktopRelease';
 const DESKTOP_RELEASE_CACHE_TTL_MS = 60 * 60 * 1000;
+const DESKTOP_RELEASE_FALLBACK = {
+  version: 'v0.1.0',
+  url: 'https://github.com/IamTrevorMay/mayday-cloud/releases/tag/v0.1.0',
+};
 
 function Sidebar({ user, activeView, onNavigate }) {
   const navItems = [
@@ -1632,16 +1636,18 @@ function Sidebar({ user, activeView, onNavigate }) {
     fetch(DESKTOP_RELEASE_API)
       .then(r => (r.ok ? r.json() : null))
       .then(data => {
-        if (cancelled || !data) return;
+        if (cancelled) return;
+        if (!data) { setDesktopRelease(DESKTOP_RELEASE_FALLBACK); return; }
         const dmg = (data.assets || []).find(a => a.name && a.name.endsWith('.dmg'));
-        if (!dmg) return;
-        const release = { version: data.tag_name, url: dmg.browser_download_url };
+        const release = dmg
+          ? { version: data.tag_name, url: dmg.browser_download_url }
+          : DESKTOP_RELEASE_FALLBACK;
         setDesktopRelease(release);
         try {
           localStorage.setItem(DESKTOP_RELEASE_CACHE_KEY, JSON.stringify({ release, fetchedAt: Date.now() }));
         } catch {}
       })
-      .catch(() => {});
+      .catch(() => { if (!cancelled) setDesktopRelease(DESKTOP_RELEASE_FALLBACK); });
 
     return () => { cancelled = true; };
   }, []);
