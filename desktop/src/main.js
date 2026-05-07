@@ -11,6 +11,8 @@ const auth = require('./auth');
 const { MountManager } = require('./mount/mount-manager');
 const rclone = require('./mount/rclone');
 const fuseCheck = require('./mount/fuse-check');
+const { validateMountPoint } = require('./mount/validate');
+const { MountHealthMonitor } = require('./mount/health');
 
 // Single instance lock
 const gotLock = app.requestSingleInstanceLock();
@@ -28,6 +30,7 @@ let syncEngine = null;
 let setupWindow = null;
 let prefsWindow = null;
 const mountManager = new MountManager();
+const healthMonitor = new MountHealthMonitor();
 
 function getIcon() {
   const assetsDir = path.join(__dirname, '..', 'assets');
@@ -171,6 +174,18 @@ async function stopSync() {
 
 async function autoStartMount(cfg) {
   try {
+    // Validate mount point before attempting
+    const validation = validateMountPoint(cfg.mountPoint);
+    if (!validation.valid) {
+      throw new Error(validation.error);
+    }
+
+    // Check rclone mount support
+    const mountSupport = rclone.checkMountSupport();
+    if (!mountSupport.supported) {
+      throw new Error(mountSupport.error || 'rclone mount not supported');
+    }
+
     const webdavUrl = cfg.apiUrl.replace(/\/$/, '') + '/api/webdav';
     await mountManager.start({
       apiUrl: webdavUrl,
@@ -182,6 +197,10 @@ async function autoStartMount(cfg) {
     logger.info(`Mount started at ${cfg.mountPoint}`);
   } catch (err) {
     logger.error('Mount auto-start failed:', err.message);
+    // Bug 3: Notify renderer of auto-start failure
+    if (mb && mb.window && !mb.window.isDestroyed()) {
+      mb.window.webContents.send('mount:autoStartFailed', err.message);
+    }
   }
 }
 
@@ -189,6 +208,16 @@ mountManager.on('stateChange', (state) => {
   // Forward mount state changes to renderer
   if (mb && mb.window && !mb.window.isDestroyed()) {
     mb.window.webContents.send('mount:stateChange', state);
+  }
+
+  // Start/stop health monitor based on mount state
+  if (state === 'mounted') {
+    const cfg = config.load();
+    if (cfg && cfg.mountPoint) {
+      healthMonitor.start(cfg.mountPoint);
+    }
+  } else {
+    healthMonitor.stop();
   }
 });
 
@@ -199,6 +228,13 @@ mountManager.on('log', (line) => {
 mountManager.on('fuseError', () => {
   if (mb && mb.window && !mb.window.isDestroyed()) {
     mb.window.webContents.send('mount:fuseError');
+  }
+});
+
+healthMonitor.on('healthCheckFailed', (error) => {
+  logger.error(`[mount] Health check failed: ${error}`);
+  if (mb && mb.window && !mb.window.isDestroyed()) {
+    mb.window.webContents.send('mount:healthCheckFailed', error);
   }
 });
 
@@ -367,6 +403,19 @@ ipcMain.handle('mount:start', async () => {
   if (!cfg || !cfg.apiKey) {
     return { success: false, error: 'Not configured — set up sync first' };
   }
+
+  // Bug 1: Validate mount point before starting
+  const validation = validateMountPoint(cfg.mountPoint);
+  if (!validation.valid) {
+    return { success: false, error: validation.error };
+  }
+
+  // Bug 5: Check rclone mount support
+  const mountSupport = rclone.checkMountSupport();
+  if (!mountSupport.supported) {
+    return { success: false, error: mountSupport.error || 'rclone mount not supported' };
+  }
+
   try {
     const webdavUrl = cfg.apiUrl.replace(/\/$/, '') + '/api/webdav';
     await mountManager.start({
@@ -428,7 +477,14 @@ ipcMain.handle('mount:updateConfig', async (_event, updates) => {
   const cfg = config.load();
   if (!cfg) return { success: false, error: 'Not configured' };
 
-  if (updates.mountPoint !== undefined) cfg.mountPoint = updates.mountPoint;
+  // Bug 8: Validate mount point before saving
+  if (updates.mountPoint !== undefined) {
+    const validation = validateMountPoint(updates.mountPoint);
+    if (!validation.valid) {
+      return { success: false, error: validation.error };
+    }
+    cfg.mountPoint = updates.mountPoint;
+  }
   if (updates.mountCacheSize !== undefined) cfg.mountCacheSize = updates.mountCacheSize;
   if (updates.mountAutoStart !== undefined) cfg.mountAutoStart = updates.mountAutoStart;
   if (updates.mountRemotePath !== undefined) cfg.mountRemotePath = updates.mountRemotePath;
@@ -490,6 +546,7 @@ app.on('window-all-closed', (e) => {
 });
 
 app.on('before-quit', async () => {
+  healthMonitor.stop();
   await mountManager.stop();
   await stopSync();
 });

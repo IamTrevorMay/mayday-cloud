@@ -1,8 +1,8 @@
 const fs = require('fs');
 const path = require('path');
 
-const CONFIG_DIR = path.join(require('os').homedir(), '.mayday-cloud');
-const CONFIG_PATH = path.join(CONFIG_DIR, 'config.json');
+let CONFIG_DIR = path.join(require('os').homedir(), '.mayday-cloud');
+let CONFIG_PATH = path.join(CONFIG_DIR, 'config.json');
 
 const DEFAULT_MOUNT_POINT = process.platform === 'darwin'
   ? '/Volumes/Mayday Cloud'
@@ -45,4 +45,20 @@ function isValid(cfg) {
   return cfg && cfg.apiUrl && cfg.apiKey && cfg.localFolder;
 }
 
-module.exports = { CONFIG_DIR, CONFIG_PATH, load, save, isValid };
+/**
+ * Override config directory for testing.
+ */
+function _setTestDir(dir) {
+  CONFIG_DIR = dir;
+  CONFIG_PATH = path.join(dir, 'config.json');
+}
+
+/**
+ * Reset config directory to default.
+ */
+function _resetTestDir() {
+  CONFIG_DIR = path.join(require('os').homedir(), '.mayday-cloud');
+  CONFIG_PATH = path.join(CONFIG_DIR, 'config.json');
+}
+
+module.exports = { get CONFIG_DIR() { return CONFIG_DIR; }, get CONFIG_PATH() { return CONFIG_PATH; }, load, save, isValid, _setTestDir, _resetTestDir };

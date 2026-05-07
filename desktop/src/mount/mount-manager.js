@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const EventEmitter = require('events');
 const { findRclone, obscurePassword } = require('./rclone');
+const config = require('../sync/config');
 
 const DEFAULT_MOUNT_POINT = process.platform === 'darwin'
   ? '/Volumes/Mayday Cloud'
@@ -11,6 +12,17 @@ const DEFAULT_MOUNT_POINT = process.platform === 'darwin'
     : path.join(require('os').homedir(), 'mayday-cloud-mount');
 
 const MAX_RESTART_DELAY = 60000;
+
+// Internal deps — overridable for testing
+const _deps = {
+  spawn,
+  execSync,
+  mkdirSync: fs.mkdirSync,
+  accessSync: fs.accessSync,
+  findRclone,
+  obscurePassword,
+  configLoad: config.load.bind(config),
+};
 
 class MountManager extends EventEmitter {
   constructor() {
@@ -39,7 +51,7 @@ class MountManager extends EventEmitter {
       throw new Error('Mount already active');
     }
 
-    const rclonePath = findRclone();
+    const rclonePath = _deps.findRclone();
     if (!rclonePath) {
       throw new Error('rclone not found. Please install rclone first.');
     }
@@ -57,13 +69,18 @@ class MountManager extends EventEmitter {
 
     // Ensure mount point directory exists (macOS/Linux)
     if (process.platform !== 'win32') {
-      fs.mkdirSync(mountPoint, { recursive: true });
+      try {
+        _deps.mkdirSync(mountPoint, { recursive: true });
+      } catch (err) {
+        this._setState('error');
+        throw new Error(`Cannot create mount point: ${err.message}`);
+      }
     }
 
     // Obscure the API key for the command line
     let obscuredKey;
     try {
-      obscuredKey = obscurePassword(apiKey);
+      obscuredKey = _deps.obscurePassword(apiKey);
     } catch (err) {
       this._setState('error');
       throw new Error(`Failed to obscure API key: ${err.message}`);
@@ -101,7 +118,7 @@ class MountManager extends EventEmitter {
       args.push(`--volname=Mayday Cloud`);
     }
 
-    this._process = spawn(rclonePath, args, {
+    this._process = _deps.spawn(rclonePath, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
     });
@@ -155,13 +172,19 @@ class MountManager extends EventEmitter {
       }
     });
 
-    // Wait a moment for the mount to establish, then check
+    // Wait a moment for the mount to establish, then verify
     await new Promise((resolve) => {
       const timeout = setTimeout(() => {
-        // If still starting after 10s, assume mounted (rclone doesn't always log)
+        // If still starting after 10s, verify mount point is actually accessible
         if (this._state === 'starting') {
-          this._setState('mounted');
-          this._restartCount = 0;
+          try {
+            _deps.accessSync(mountPoint);
+            this._setState('mounted');
+            this._restartCount = 0;
+          } catch {
+            this.emit('log', 'Mount point not accessible after timeout');
+            this._setState('error');
+          }
         }
         resolve();
       }, 10000);
@@ -204,7 +227,7 @@ class MountManager extends EventEmitter {
       // On macOS/Linux, try umount then SIGTERM
       if (mountPoint) {
         try {
-          execSync(`umount "${mountPoint}" 2>/dev/null || true`, { timeout: 5000 });
+          _deps.execSync(`umount "${mountPoint}" 2>/dev/null || true`, { timeout: 5000 });
         } catch { /* ignore */ }
       }
       try {
@@ -264,12 +287,31 @@ class MountManager extends EventEmitter {
     this._restartTimer = setTimeout(() => {
       this._restartTimer = null;
       if (!this._stopping) {
-        this.start(opts).catch((err) => {
+        // Bug 9: Reload config for fresh opts instead of using stale closure variable
+        let freshOpts = opts;
+        try {
+          const cfg = _deps.configLoad();
+          if (cfg && cfg.apiKey && cfg.apiUrl) {
+            const webdavUrl = cfg.apiUrl.replace(/\/$/, '') + '/api/webdav';
+            freshOpts = {
+              apiUrl: webdavUrl,
+              apiKey: cfg.apiKey,
+              mountPoint: cfg.mountPoint || opts.mountPoint,
+              cacheSize: cfg.mountCacheSize || opts.cacheSize || '50G',
+              remotePath: cfg.mountRemotePath || opts.remotePath || '/',
+            };
+          }
+        } catch {
+          // Config unreadable — fall back to original opts
+        }
+        this.start(freshOpts).catch((err) => {
           this.emit('log', `Restart failed: ${err.message}`);
+          // Bug 4: Set error state when restart fails
+          this._setState('error');
         });
       }
     }, delay);
   }
 }
 
-module.exports = { MountManager, DEFAULT_MOUNT_POINT };
+module.exports = { MountManager, DEFAULT_MOUNT_POINT, _deps };

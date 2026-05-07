@@ -208,5 +208,28 @@ if (window.mayday.onMountStateChange) {
   window.mayday.onMountStateChange(() => refreshMount());
 }
 
+// Listen for mount auto-start failures
+if (window.mayday.onMountAutoStartFailed) {
+  window.mayday.onMountAutoStartFailed((error) => {
+    const text = $('#mount-status-text');
+    const dot = $('#mount-dot');
+    if (text) text.textContent = error || 'Auto-start failed';
+    if (dot) dot.className = 'status-dot error';
+  });
+}
+
+// Listen for health check failures
+if (window.mayday.onMountHealthCheckFailed) {
+  window.mayday.onMountHealthCheckFailed((error) => {
+    const text = $('#mount-status-text');
+    const dot = $('#mount-dot');
+    if (text) text.textContent = 'Connection lost';
+    if (dot) dot.className = 'status-dot error';
+  });
+}
+
+// Bug 7: Periodic mount status polling
+setInterval(refreshMount, 5000);
+
 // Initial mount status
 refreshMount();

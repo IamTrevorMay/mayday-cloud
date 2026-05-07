@@ -8,10 +8,12 @@
   "private": true,
   "scripts": {
     "start": "electron .",
+    "test": "vitest run",
     "dist": "electron-builder --config electron-builder.js --mac --universal --publish never",
     "release": "electron-builder --config electron-builder.js --mac --universal --publish always"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.105.3",
     "chokidar": "^3.6.0",
     "electron-updater": "^6.3.9",
     "menubar": "^9.5.1",
@@ -21,6 +23,7 @@
   "devDependencies": {
     "dmg-license": "^1.0.11",
     "electron": "^31.0.0",
-    "electron-builder": "^24.13.3"
+    "electron-builder": "^24.13.3",
+    "vitest": "^4.1.4"
   }
 }

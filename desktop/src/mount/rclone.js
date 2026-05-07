@@ -20,6 +20,12 @@ const SEARCH_PATHS = process.platform === 'win32'
     '/opt/homebrew/bin/rclone',
   ];
 
+// Internal deps — overridable for testing
+const _deps = {
+  execSync,
+  existsSync: fs.existsSync,
+};
+
 let _cachedPath = null;
 
 /**
@@ -30,7 +36,7 @@ function findRclone() {
 
   // Check known locations first (ordered by preference — official binary before Homebrew)
   for (const p of SEARCH_PATHS) {
-    if (p && fs.existsSync(p)) {
+    if (p && _deps.existsSync(p)) {
       _cachedPath = p;
       return p;
     }
@@ -39,8 +45,8 @@ function findRclone() {
   // Fall back to PATH lookup
   try {
     const cmd = process.platform === 'win32' ? 'where rclone' : 'which rclone';
-    const result = execSync(cmd, { encoding: 'utf8', timeout: 5000 }).trim().split('\n')[0];
-    if (result && fs.existsSync(result)) {
+    const result = _deps.execSync(cmd, { encoding: 'utf8', timeout: 5000 }).trim().split('\n')[0];
+    if (result && _deps.existsSync(result)) {
       _cachedPath = result;
       return result;
     }
@@ -59,7 +65,7 @@ function getVersion() {
   if (!bin) return null;
 
   try {
-    const output = execSync(`"${bin}" version`, { encoding: 'utf8', timeout: 5000 });
+    const output = _deps.execSync(`"${bin}" version`, { encoding: 'utf8', timeout: 5000 });
     const match = output.match(/rclone\s+v([\d.]+)/);
     return match ? match[1] : output.trim().split('\n')[0];
   } catch {
@@ -75,7 +81,7 @@ function obscurePassword(password) {
   const bin = findRclone();
   if (!bin) throw new Error('rclone not found');
 
-  const result = execSync(`"${bin}" obscure "${password}"`, { encoding: 'utf8', timeout: 5000 });
+  const result = _deps.execSync(`"${bin}" obscure "${password}"`, { encoding: 'utf8', timeout: 5000 });
   return result.trim();
 }
 
@@ -110,4 +116,36 @@ function getInstallInstructions() {
   };
 }
 
-module.exports = { findRclone, getVersion, obscurePassword, getInstallInstructions };
+/**
+ * Check if the installed rclone supports the `mount` command.
+ * Some builds (e.g. Homebrew on macOS) omit FUSE mount support.
+ * @returns {{ supported: boolean, error?: string }}
+ */
+function checkMountSupport() {
+  const bin = findRclone();
+  if (!bin) return { supported: false, error: 'rclone not found' };
+
+  try {
+    _deps.execSync(`"${bin}" help mount`, { encoding: 'utf8', timeout: 5000 });
+    return { supported: true };
+  } catch (err) {
+    const msg = err.stderr || err.stdout || err.message || '';
+    if (msg.includes('Unknown command') || msg.includes('unknown command')) {
+      return { supported: false, error: 'rclone mount command not available (Homebrew build?)' };
+    }
+    // The help command may exit non-zero but still print help text — treat as supported
+    if (msg.includes('mount') && msg.includes('Usage')) {
+      return { supported: true };
+    }
+    return { supported: false, error: `Unable to verify mount support: ${msg.slice(0, 200)}` };
+  }
+}
+
+/**
+ * Reset the cached rclone path (for test isolation).
+ */
+function _resetCache() {
+  _cachedPath = null;
+}
+
+module.exports = { findRclone, getVersion, obscurePassword, getInstallInstructions, checkMountSupport, _resetCache, _deps };

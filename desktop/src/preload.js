@@ -43,4 +43,10 @@ contextBridge.exposeInMainWorld('mayday', {
   onMountFuseError: (callback) => {
     ipcRenderer.on('mount:fuseError', () => callback());
   },
+  onMountAutoStartFailed: (callback) => {
+    ipcRenderer.on('mount:autoStartFailed', (_event, error) => callback(error));
+  },
+  onMountHealthCheckFailed: (callback) => {
+    ipcRenderer.on('mount:healthCheckFailed', (_event, error) => callback(error));
+  },
 });
