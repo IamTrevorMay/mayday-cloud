@@ -7,13 +7,14 @@ const fs = require('fs');
 const { Server: TusServer } = require('@tus/server');
 const { FileStore } = require('@tus/file-store');
 const webdav = require('webdav-server').v2;
-const { authMiddleware, verifyToken, requireRole } = require('./middleware/auth');
+const { authMiddleware, verifyToken, requireRole, resolveRole } = require('./middleware/auth');
 const { createWebDAVServer } = require('./webdav/server');
 const nasRouter = require('./routes/nas');
 const sharesRouter = require('./routes/shares');
 const keysRouter = require('./routes/keys');
 const dropRouter = require('./routes/drop');
 const authRouter = require('./routes/auth');
+const restrictionsRouter = require('./routes/restrictions');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -181,9 +182,20 @@ app.use(webdav.extensions.express('/api/webdav', webdavServer));
 
 // Protected routes — require valid Supabase JWT or API key
 app.use('/api', authMiddleware);
+
+// Attach profileRole on every authenticated request (uses 5-min cache)
+app.use('/api', async (req, res, next) => {
+  if (!req.user?.id) return next();
+  try {
+    req.user.profileRole = await resolveRole(req.user.id);
+  } catch { /* role will be resolved lazily if needed */ }
+  next();
+});
+
 app.use('/api/nas', nasRouter);
 app.use('/api/shares', sharesRouter);
 app.use('/api/keys', keysRouter);
+app.use('/api/restrictions', restrictionsRouter);
 
 // User info (tests that auth works)
 app.get('/api/me', (req, res) => {

@@ -131,4 +131,4 @@ async function authMiddleware(req, res, next) {
   }
 }
 
-module.exports = { authMiddleware, requireRole, verifyToken };
+module.exports = { authMiddleware, requireRole, verifyToken, resolveRole };

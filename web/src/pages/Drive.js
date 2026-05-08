@@ -147,6 +147,14 @@ export default function Drive() {
   const [favoriteItems, setFavoriteItems] = useState([]);
   const [favoritesLoading, setFavoritesLoading] = useState(false);
 
+  // ─── User role state ───
+  const [userRole, setUserRole] = useState(null);
+
+  // ─── Access management dialog state ───
+  const [showAccessDialog, setShowAccessDialog] = useState(null);
+  const [accessBlocked, setAccessBlocked] = useState({ member: false, viewer: false });
+  const [accessLoading, setAccessLoading] = useState(false);
+
   // ─── Settings state ───
   const [storageInfo, setStorageInfo] = useState(null);
 
@@ -169,6 +177,13 @@ export default function Drive() {
   }, []);
 
   useEffect(() => { checkHealth(); }, [checkHealth]);
+
+  // Fetch user role on mount
+  useEffect(() => {
+    authedFetch('/api/me')
+      .then(data => setUserRole(data?.user?.profileRole || null))
+      .catch(() => {});
+  }, []);
 
   // Fetch listing
   const fetchListing = useCallback(async (dirPath) => {
@@ -251,6 +266,36 @@ export default function Drive() {
     navigator.clipboard.writeText(url);
     setCopiedLink(url);
     setTimeout(() => setCopiedLink(null), 2000);
+  }
+
+  // ─── Access management API ───
+  async function openAccessDialog(item) {
+    setShowAccessDialog(item);
+    setAccessLoading(true);
+    try {
+      const data = await authedFetch(`/api/restrictions?folder_path=${encodeURIComponent(item.path)}`);
+      setAccessBlocked(data.blocked || { member: false, viewer: false });
+    } catch {
+      setAccessBlocked({ member: false, viewer: false });
+    } finally {
+      setAccessLoading(false);
+    }
+  }
+
+  async function saveAccessRestrictions() {
+    if (!showAccessDialog) return;
+    setAccessLoading(true);
+    try {
+      await authedFetch('/api/restrictions', {
+        method: 'PUT',
+        body: JSON.stringify({ folder_path: showAccessDialog.path, blocked: accessBlocked }),
+      });
+      setShowAccessDialog(null);
+    } catch (err) {
+      alert('Failed to save restrictions: ' + err.message);
+    } finally {
+      setAccessLoading(false);
+    }
   }
 
   // ─── Trash API ───
@@ -1116,6 +1161,9 @@ export default function Drive() {
                 <button style={s.contextMenuItem} onClick={() => toggleFavorite(contextMenu.item.path)}>
                   {favorites.has(contextMenu.item.path) ? 'Unfavorite' : 'Favorite'}
                 </button>
+                {userRole === 'admin' && contextMenu.item.type === 'directory' && (
+                  <button style={s.contextMenuItem} onClick={() => openAccessDialog(contextMenu.item)}>Manage Access</button>
+                )}
                 <button style={{ ...s.contextMenuItem, color: '#fca5a5' }} onClick={() => handleDelete(contextMenu.item)}>Delete</button>
               </div>
             )}
@@ -1178,6 +1226,49 @@ export default function Drive() {
           />
         )}
       </div>
+
+      {/* Access Management Dialog */}
+      {showAccessDialog && (
+        <div style={s.dialogOverlay} onClick={() => setShowAccessDialog(null)}>
+          <div style={s.dialogCard} onClick={e => e.stopPropagation()}>
+            <div style={s.dialogTitle}>Manage Access</div>
+            <div style={s.dialogSubtitle}>/{showAccessDialog.path}</div>
+            {accessLoading ? (
+              <div style={{ color: 'rgba(255,255,255,0.5)', fontSize: '13px', padding: '12px 0' }}>Loading...</div>
+            ) : (
+              <>
+                <div style={{ fontSize: '13px', color: 'rgba(255,255,255,0.45)', marginBottom: '16px' }}>
+                  Unchecking a role hides this folder and its contents from that role.
+                </div>
+                {[
+                  { role: 'admin', label: 'Admin', locked: true },
+                  { role: 'member', label: 'Member', locked: false },
+                  { role: 'viewer', label: 'Viewer', locked: false },
+                ].map(({ role, label, locked }) => (
+                  <label key={role} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 0', cursor: locked ? 'default' : 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={locked ? true : !accessBlocked[role]}
+                      disabled={locked}
+                      onChange={() => {
+                        if (!locked) setAccessBlocked(prev => ({ ...prev, [role]: !prev[role] }));
+                      }}
+                      style={{ width: '16px', height: '16px', accentColor: '#6366f1' }}
+                    />
+                    <span style={{ fontSize: '14px', color: locked ? 'rgba(255,255,255,0.35)' : '#e2e8f0' }}>
+                      {label} {locked && '(always visible)'}
+                    </span>
+                  </label>
+                ))}
+                <div style={s.dialogActions}>
+                  <button onClick={() => setShowAccessDialog(null)} style={s.dialogCancelBtn}>Cancel</button>
+                  <button onClick={saveAccessRestrictions} style={s.dialogConfirmBtn}>Save</button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Create Share Dialog */}
       {showCreateShare && (
