@@ -4,3 +4,4 @@ node_modules/
 web/build/
 *.log
 .thumbs/
+.vercel

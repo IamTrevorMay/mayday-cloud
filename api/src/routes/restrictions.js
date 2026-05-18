@@ -9,28 +9,47 @@ function getSupabase() {
 
 const adminGuard = requireRole('admin');
 
+// GET /api/admin/users — list all profiles (admin only)
+router.get('/admin/users', adminGuard, async (req, res) => {
+  try {
+    const sb = getSupabase();
+    const { data, error } = await sb
+      .from('profiles')
+      .select('id, email, display_name, role')
+      .order('email');
+    if (error) throw error;
+    res.json(data || []);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 // GET /api/restrictions?folder_path=X
-// Returns { blocked: { member: bool, viewer: bool } }
+// Returns { folder_path, blocked: { member, viewer }, blocked_users: [uuid, ...] }
 router.get('/', adminGuard, async (req, res) => {
   try {
     const { folder_path } = req.query;
     if (!folder_path) return res.status(400).json({ error: 'folder_path required' });
 
     const sb = getSupabase();
-    const { data, error } = await sb
-      .from('folder_restrictions')
-      .select('blocked_role')
-      .eq('folder_path', folder_path);
+    const [roleResult, userResult] = await Promise.all([
+      sb.from('folder_restrictions').select('blocked_role').eq('folder_path', folder_path),
+      sb.from('user_folder_restrictions').select('user_id').eq('folder_path', folder_path),
+    ]);
 
-    if (error) throw error;
+    if (roleResult.error) throw roleResult.error;
+    if (userResult.error) throw userResult.error;
 
-    const blockedRoles = new Set((data || []).map(r => r.blocked_role));
+    const blockedRoles = new Set((roleResult.data || []).map(r => r.blocked_role));
+    const blockedUsers = (userResult.data || []).map(r => r.user_id);
+
     res.json({
       folder_path,
       blocked: {
         member: blockedRoles.has('member'),
         viewer: blockedRoles.has('viewer'),
       },
+      blocked_users: blockedUsers,
     });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -38,19 +57,19 @@ router.get('/', adminGuard, async (req, res) => {
 });
 
 // PUT /api/restrictions
-// Body: { folder_path, blocked: { member: bool, viewer: bool } }
+// Body: { folder_path, blocked: { member, viewer }, blocked_users: [uuid, ...] }
 router.put('/', adminGuard, async (req, res) => {
   try {
-    const { folder_path, blocked } = req.body;
+    const { folder_path, blocked, blocked_users } = req.body;
     if (!folder_path || !blocked) {
       return res.status(400).json({ error: 'folder_path and blocked required' });
     }
 
     const sb = getSupabase();
 
+    // --- Role-level restrictions ---
     for (const role of ['member', 'viewer']) {
       if (blocked[role]) {
-        // Upsert restriction
         const { error } = await sb
           .from('folder_restrictions')
           .upsert(
@@ -59,7 +78,6 @@ router.put('/', adminGuard, async (req, res) => {
           );
         if (error) throw error;
       } else {
-        // Remove restriction
         const { error } = await sb
           .from('folder_restrictions')
           .delete()
@@ -69,7 +87,40 @@ router.put('/', adminGuard, async (req, res) => {
       }
     }
 
-    res.json({ success: true, folder_path, blocked });
+    // --- Per-user restrictions ---
+    if (Array.isArray(blocked_users)) {
+      // Get current user restrictions for this folder
+      const { data: existing, error: fetchErr } = await sb
+        .from('user_folder_restrictions')
+        .select('user_id')
+        .eq('folder_path', folder_path);
+      if (fetchErr) throw fetchErr;
+
+      const currentSet = new Set((existing || []).map(r => r.user_id));
+      const desiredSet = new Set(blocked_users);
+
+      // Insert new blocks
+      const toInsert = blocked_users.filter(uid => !currentSet.has(uid));
+      if (toInsert.length > 0) {
+        const { error } = await sb
+          .from('user_folder_restrictions')
+          .insert(toInsert.map(uid => ({ folder_path, user_id: uid, created_by: req.user.id })));
+        if (error) throw error;
+      }
+
+      // Remove unblocked users
+      const toRemove = [...currentSet].filter(uid => !desiredSet.has(uid));
+      if (toRemove.length > 0) {
+        const { error } = await sb
+          .from('user_folder_restrictions')
+          .delete()
+          .eq('folder_path', folder_path)
+          .in('user_id', toRemove);
+        if (error) throw error;
+      }
+    }
+
+    res.json({ success: true, folder_path, blocked, blocked_users: blocked_users || [] });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }

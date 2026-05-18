@@ -32,22 +32,37 @@ async function getRestrictions() {
     return restrictionsCache.data;
   }
   const sb = getSupabase();
-  const { data, error } = await sb.from('folder_restrictions').select('folder_path, blocked_role');
-  const rows = error ? [] : (data || []);
-  restrictionsCache = { data: rows, expiresAt: Date.now() + RESTRICTIONS_TTL };
-  return rows;
+  const [roleResult, userResult] = await Promise.all([
+    sb.from('folder_restrictions').select('folder_path, blocked_role'),
+    sb.from('user_folder_restrictions').select('folder_path, user_id'),
+  ]);
+  const roleRows = roleResult.error ? [] : (roleResult.data || []);
+  const userRows = userResult.error ? [] : (userResult.data || []);
+  const result = { roleRows, userRows };
+  restrictionsCache = { data: result, expiresAt: Date.now() + RESTRICTIONS_TTL };
+  return result;
 }
 
-function isPathRestricted(itemPath, role, restrictions) {
+function isPathRestricted(itemPath, role, userId, restrictions) {
   if (!role || role === 'admin') return false;
-  // Normalize: strip leading/trailing slashes for consistent comparison
   const normalized = (itemPath || '').replace(/^\/+|\/+$/g, '');
-  for (const r of restrictions) {
+
+  // Check role-level restrictions
+  for (const r of restrictions.roleRows) {
     if (r.blocked_role !== role) continue;
     const rNorm = (r.folder_path || '').replace(/^\/+|\/+$/g, '');
-    // Exact match or ancestor match
     if (normalized === rNorm || normalized.startsWith(rNorm + '/')) return true;
   }
+
+  // Check per-user restrictions
+  if (userId) {
+    for (const r of restrictions.userRows) {
+      if (r.user_id !== userId) continue;
+      const rNorm = (r.folder_path || '').replace(/^\/+|\/+$/g, '');
+      if (normalized === rNorm || normalized.startsWith(rNorm + '/')) return true;
+    }
+  }
+
   return false;
 }
 
@@ -104,7 +119,8 @@ router.get('/list', async (req, res) => {
     // Filter restricted folders for non-admin users
     const restrictions = await getRestrictions();
     const role = req.user?.profileRole;
-    items = items.filter(item => !isPathRestricted(item.path, role, restrictions));
+    const userId = req.user?.id;
+    items = items.filter(item => !isPathRestricted(item.path, role, userId, restrictions));
 
     items.sort((a, b) => {
       if (a.type !== b.type) return a.type === 'directory' ? -1 : 1;
@@ -127,7 +143,7 @@ router.get('/stat', async (req, res) => {
     const requestedPath = req.query.path;
     if (!requestedPath) return res.status(400).json({ error: 'path required' });
     const restrictions = await getRestrictions();
-    if (isPathRestricted(requestedPath, req.user?.profileRole, restrictions)) {
+    if (isPathRestricted(requestedPath, req.user?.profileRole, req.user?.id, restrictions)) {
       return res.status(403).json({ error: 'Access restricted' });
     }
     const fullPath = sanitizePath(requestedPath, ASSETS_ROOT);
@@ -151,7 +167,7 @@ router.get('/download', async (req, res) => {
     const requestedPath = req.query.path;
     if (!requestedPath) return res.status(400).json({ error: 'path required' });
     const restrictions = await getRestrictions();
-    if (isPathRestricted(requestedPath, req.user?.profileRole, restrictions)) {
+    if (isPathRestricted(requestedPath, req.user?.profileRole, req.user?.id, restrictions)) {
       return res.status(403).json({ error: 'Access restricted' });
     }
     const fullPath = sanitizePath(requestedPath, ASSETS_ROOT);
@@ -182,7 +198,7 @@ router.get('/stream', async (req, res) => {
     const requestedPath = req.query.path;
     if (!requestedPath) return res.status(400).json({ error: 'path required' });
     const restrictions = await getRestrictions();
-    if (isPathRestricted(requestedPath, req.user?.profileRole, restrictions)) {
+    if (isPathRestricted(requestedPath, req.user?.profileRole, req.user?.id, restrictions)) {
       return res.status(403).json({ error: 'Access restricted' });
     }
     const fullPath = sanitizePath(requestedPath, ASSETS_ROOT);
@@ -241,7 +257,7 @@ router.get('/thumb', async (req, res) => {
     const requestedPath = req.query.path;
     if (!requestedPath) return res.status(400).json({ error: 'path required' });
     const restrictions = await getRestrictions();
-    if (isPathRestricted(requestedPath, req.user?.profileRole, restrictions)) {
+    if (isPathRestricted(requestedPath, req.user?.profileRole, req.user?.id, restrictions)) {
       return res.status(403).json({ error: 'Access restricted' });
     }
     const fullPath = sanitizePath(requestedPath, ASSETS_ROOT);
@@ -449,7 +465,8 @@ router.get('/search', async (req, res) => {
     let results = await walk(searchRoot);
     const restrictions = await getRestrictions();
     const role = req.user?.profileRole;
-    results = results.filter(item => !isPathRestricted(item.path, role, restrictions));
+    const userId = req.user?.id;
+    results = results.filter(item => !isPathRestricted(item.path, role, userId, restrictions));
     res.json({ query, results });
   } catch (err) {
     res.status(400).json({ error: err.message });

@@ -154,6 +154,8 @@ export default function Drive() {
   const [showAccessDialog, setShowAccessDialog] = useState(null);
   const [accessBlocked, setAccessBlocked] = useState({ member: false, viewer: false });
   const [accessLoading, setAccessLoading] = useState(false);
+  const [allUsers, setAllUsers] = useState([]);
+  const [blockedUsers, setBlockedUsers] = useState(new Set());
 
   // ─── Settings state ───
   const [storageInfo, setStorageInfo] = useState(null);
@@ -273,10 +275,17 @@ export default function Drive() {
     setShowAccessDialog(item);
     setAccessLoading(true);
     try {
-      const data = await authedFetch(`/api/restrictions?folder_path=${encodeURIComponent(item.path)}`);
-      setAccessBlocked(data.blocked || { member: false, viewer: false });
+      const [restrictionsData, usersData] = await Promise.all([
+        authedFetch(`/api/restrictions?folder_path=${encodeURIComponent(item.path)}`),
+        authedFetch('/api/restrictions/admin/users'),
+      ]);
+      setAccessBlocked(restrictionsData.blocked || { member: false, viewer: false });
+      setBlockedUsers(new Set(restrictionsData.blocked_users || []));
+      setAllUsers(usersData || []);
     } catch {
       setAccessBlocked({ member: false, viewer: false });
+      setBlockedUsers(new Set());
+      setAllUsers([]);
     } finally {
       setAccessLoading(false);
     }
@@ -288,7 +297,11 @@ export default function Drive() {
     try {
       await authedFetch('/api/restrictions', {
         method: 'PUT',
-        body: JSON.stringify({ folder_path: showAccessDialog.path, blocked: accessBlocked }),
+        body: JSON.stringify({
+          folder_path: showAccessDialog.path,
+          blocked: accessBlocked,
+          blocked_users: [...blockedUsers],
+        }),
       });
       setShowAccessDialog(null);
     } catch (err) {
@@ -604,6 +617,10 @@ export default function Drive() {
 
   // ─── Upload (tus for large files, multer for small) ───
   async function handleUploadFiles(files, targetPath) {
+    // Snapshot the FileList immediately — the caller may clear the file input
+    // (e.target.value = '') before the first await, which empties live FileLists.
+    const fileList = Array.from(files);
+    if (!fileList.length) return;
     const uploadPath = targetPath !== undefined ? targetPath : currentPath;
     const { supabase } = await import('../lib/supabase');
     const { data: { session } } = await supabase.auth.getSession();
@@ -616,7 +633,6 @@ export default function Drive() {
       if (currentPathRef.current === uploadPath) fetchListing(uploadPath);
     };
 
-    const fileList = Array.from(files);
     for (const file of fileList) {
       const id = Date.now() + '_' + file.name;
 
@@ -1237,7 +1253,7 @@ export default function Drive() {
               <div style={{ color: 'rgba(255,255,255,0.5)', fontSize: '13px', padding: '12px 0' }}>Loading...</div>
             ) : (
               <>
-                <div style={{ fontSize: '13px', color: 'rgba(255,255,255,0.45)', marginBottom: '16px' }}>
+                <div style={{ fontSize: '13px', color: 'rgba(255,255,255,0.45)', marginBottom: '12px' }}>
                   Unchecking a role hides this folder and its contents from that role.
                 </div>
                 {[
@@ -1260,6 +1276,37 @@ export default function Drive() {
                     </span>
                   </label>
                 ))}
+                {allUsers.filter(u => u.role !== 'admin').length > 0 && (
+                  <>
+                    <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', margin: '16px 0 12px' }} />
+                    <div style={{ fontSize: '13px', color: 'rgba(255,255,255,0.45)', marginBottom: '12px' }}>
+                      Block specific users from this folder (admins always have access).
+                    </div>
+                    {allUsers.filter(u => u.role !== 'admin').map(user => (
+                      <label key={user.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '6px 0', cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          checked={!blockedUsers.has(user.id)}
+                          onChange={() => {
+                            setBlockedUsers(prev => {
+                              const next = new Set(prev);
+                              if (next.has(user.id)) next.delete(user.id);
+                              else next.add(user.id);
+                              return next;
+                            });
+                          }}
+                          style={{ width: '16px', height: '16px', accentColor: '#6366f1' }}
+                        />
+                        <span style={{ fontSize: '14px', color: '#e2e8f0' }}>
+                          {user.display_name || user.email}
+                        </span>
+                        <span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.3)', marginLeft: 'auto' }}>
+                          {user.role}
+                        </span>
+                      </label>
+                    ))}
+                  </>
+                )}
                 <div style={s.dialogActions}>
                   <button onClick={() => setShowAccessDialog(null)} style={s.dialogCancelBtn}>Cancel</button>
                   <button onClick={saveAccessRestrictions} style={s.dialogConfirmBtn}>Save</button>
