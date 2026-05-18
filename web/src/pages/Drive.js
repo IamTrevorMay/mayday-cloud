@@ -1227,6 +1227,7 @@ export default function Drive() {
         {activeView === 'settings' && (
           <SettingsView
             user={user}
+            userRole={userRole}
             storageInfo={storageInfo}
             signOut={signOut}
             apiKeys={apiKeys}
@@ -1617,12 +1618,41 @@ function TrashView({ items, loading, onRestore, onDelete, onEmpty }) {
 }
 
 // ─── Settings View ───
-function SettingsView({ user, storageInfo, signOut, apiKeys, apiKeysLoading, showCreateKey, setShowCreateKey, newKeyName, setNewKeyName, createdKey, setCreatedKey, onCreateKey, onRevokeKey }) {
+const ROLE_COLORS = { admin: '#f59e0b', member: '#6366f1', viewer: '#64748b' };
+
+function SettingsView({ user, userRole, storageInfo, signOut, apiKeys, apiKeysLoading, showCreateKey, setShowCreateKey, newKeyName, setNewKeyName, createdKey, setCreatedKey, onCreateKey, onRevokeKey }) {
   const [copiedKey, setCopiedKey] = useState(null);
+  const [allUsers, setAllUsers] = useState([]);
+  const [usersLoading, setUsersLoading] = useState(false);
+  const [roleUpdating, setRoleUpdating] = useState(null);
   const percentColor = !storageInfo ? '#6366f1'
     : storageInfo.percent >= 90 ? '#ef4444'
     : storageInfo.percent >= 70 ? '#f59e0b'
     : '#6366f1';
+
+  useEffect(() => {
+    if (userRole !== 'admin') return;
+    setUsersLoading(true);
+    authedFetch('/api/restrictions/admin/users')
+      .then(setAllUsers)
+      .catch(() => {})
+      .finally(() => setUsersLoading(false));
+  }, [userRole]);
+
+  async function handleRoleChange(userId, newRole) {
+    setRoleUpdating(userId);
+    try {
+      const updated = await authedFetch(`/api/restrictions/admin/users/${userId}/role`, {
+        method: 'PUT',
+        body: JSON.stringify({ role: newRole }),
+      });
+      setAllUsers(prev => prev.map(u => u.id === userId ? { ...u, role: updated.role } : u));
+    } catch (err) {
+      alert('Failed to update role: ' + err.message);
+    } finally {
+      setRoleUpdating(null);
+    }
+  }
 
   function copyKey(key) {
     navigator.clipboard.writeText(key);
@@ -1732,6 +1762,67 @@ function SettingsView({ user, storageInfo, signOut, apiKeys, apiKeysLoading, sho
             </div>
           )}
         </div>
+
+        {/* User Management — admin only */}
+        {userRole === 'admin' && (
+          <div style={{ marginBottom: '24px' }}>
+            <div style={{ fontSize: '12px', fontWeight: 600, color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '12px' }}>
+              User Management
+            </div>
+            {usersLoading ? (
+              <div style={{ fontSize: '13px', color: 'rgba(255,255,255,0.3)', padding: '12px 0' }}>Loading...</div>
+            ) : allUsers.length === 0 ? (
+              <div style={{ fontSize: '13px', color: 'rgba(255,255,255,0.3)', padding: '12px 0' }}>No users found.</div>
+            ) : (
+              <div style={{ borderRadius: '10px', border: '1px solid rgba(255,255,255,0.06)', overflow: 'hidden' }}>
+                {allUsers.map((u, i) => (
+                  <div key={u.id} style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    padding: '10px 14px',
+                    borderBottom: i < allUsers.length - 1 ? '1px solid rgba(255,255,255,0.04)' : 'none',
+                    background: 'rgba(255,255,255,0.02)',
+                  }}>
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div style={{ fontSize: '14px', fontWeight: 500, color: '#e2e8f0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {u.display_name || u.email}
+                      </div>
+                      {u.display_name && (
+                        <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.3)', marginTop: '1px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {u.email}
+                        </div>
+                      )}
+                    </div>
+                    <select
+                      value={u.role}
+                      onChange={e => handleRoleChange(u.id, e.target.value)}
+                      disabled={roleUpdating === u.id}
+                      style={{
+                        background: 'rgba(255,255,255,0.05)',
+                        border: '1px solid',
+                        borderColor: ROLE_COLORS[u.role] || '#64748b',
+                        borderRadius: '8px',
+                        padding: '5px 8px',
+                        fontSize: '12px',
+                        fontWeight: 600,
+                        fontFamily: 'inherit',
+                        color: ROLE_COLORS[u.role] || '#e2e8f0',
+                        cursor: 'pointer',
+                        outline: 'none',
+                        opacity: roleUpdating === u.id ? 0.5 : 1,
+                        flexShrink: 0,
+                        marginLeft: '12px',
+                      }}
+                    >
+                      <option value="admin">Admin</option>
+                      <option value="member">Member</option>
+                      <option value="viewer">Viewer</option>
+                    </select>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         <button onClick={signOut} style={{ ...s.dialogCancelBtn, width: '100%', textAlign: 'center' }}>
           Sign Out
