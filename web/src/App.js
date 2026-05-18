@@ -4,6 +4,7 @@ import { useAuth } from './contexts/AuthContext';
 import Login from './pages/Login';
 import Drive from './pages/Drive';
 import DropPage from './pages/DropPage';
+import ResetPassword from './pages/ResetPassword';
 
 export default function App() {
   const { session, loading } = useAuth();
@@ -19,8 +20,9 @@ export default function App() {
 
   return (
     <Routes>
-      {/* Public: share link drop page */}
+      {/* Public routes */}
       <Route path="/drop/:token" element={<DropPage />} />
+      <Route path="/reset" element={<ResetPassword />} />
 
       {/* Auth-gated routes */}
       {session ? (

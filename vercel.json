@@ -2,5 +2,8 @@
   "buildCommand": "cd web && npm install && npm run build",
   "outputDirectory": "web/build",
   "framework": null,
-  "installCommand": "echo 'skip root install'"
+  "installCommand": "echo 'skip root install'",
+  "rewrites": [
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
 }
