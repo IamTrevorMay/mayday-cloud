@@ -19,17 +19,46 @@ function formatUptime(seconds) {
   return `${m}m`;
 }
 
+const ROLE_COLORS = {
+  admin: '#f59e0b',
+  member: '#6366f1',
+  viewer: '#64748b',
+};
+
 export default function Admin() {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [users, setUsers] = useState([]);
+  const [usersLoading, setUsersLoading] = useState(true);
+  const [roleUpdating, setRoleUpdating] = useState(null);
 
   useEffect(() => {
     authedFetch('/api/admin/health')
       .then(setData)
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
+
+    authedFetch('/api/restrictions/admin/users')
+      .then(setUsers)
+      .catch(() => {})
+      .finally(() => setUsersLoading(false));
   }, []);
+
+  async function handleRoleChange(userId, newRole) {
+    setRoleUpdating(userId);
+    try {
+      const updated = await authedFetch(`/api/restrictions/admin/users/${userId}/role`, {
+        method: 'PUT',
+        body: JSON.stringify({ role: newRole }),
+      });
+      setUsers(prev => prev.map(u => u.id === userId ? { ...u, role: updated.role } : u));
+    } catch (err) {
+      alert(`Failed to update role: ${err.message}`);
+    } finally {
+      setRoleUpdating(null);
+    }
+  }
 
   if (loading) {
     return <div style={s.page}><div style={s.loading}>Loading...</div></div>;
@@ -102,10 +131,50 @@ export default function Admin() {
         <div style={s.card}>
           <div style={s.cardLabel}>Active Shares</div>
           <div style={s.bigNumber}>{data.shares?.active_count ?? '—'}</div>
-          <div style={s.detail}>
-            {data.shares?.by_mode?.download || 0} download · {data.shares?.by_mode?.upload || 0} upload · {data.shares?.by_mode?.both || 0} both
-          </div>
+          <div style={s.detail}>share links</div>
         </div>
+      </div>
+
+      {/* User Management */}
+      <div style={s.usersSection}>
+        <h2 style={s.sectionHeading}>User Management</h2>
+        {usersLoading ? (
+          <div style={s.detail}>Loading users...</div>
+        ) : users.length === 0 ? (
+          <div style={s.detail}>No users found.</div>
+        ) : (
+          <div style={s.usersTable}>
+            <div style={s.tableHeader}>
+              <span style={{ ...s.tableCell, flex: 2 }}>User</span>
+              <span style={{ ...s.tableCell, flex: 1 }}>Role</span>
+            </div>
+            {users.map(user => (
+              <div key={user.id} style={s.tableRow}>
+                <div style={{ ...s.tableCell, flex: 2 }}>
+                  <div style={s.userName}>{user.display_name || user.email}</div>
+                  {user.display_name && <div style={s.userEmail}>{user.email}</div>}
+                </div>
+                <div style={{ ...s.tableCell, flex: 1 }}>
+                  <select
+                    value={user.role}
+                    onChange={e => handleRoleChange(user.id, e.target.value)}
+                    disabled={roleUpdating === user.id}
+                    style={{
+                      ...s.roleSelect,
+                      borderColor: ROLE_COLORS[user.role] || '#64748b',
+                      color: ROLE_COLORS[user.role] || '#e2e8f0',
+                      opacity: roleUpdating === user.id ? 0.5 : 1,
+                    }}
+                  >
+                    <option value="admin">Admin</option>
+                    <option value="member">Member</option>
+                    <option value="viewer">Viewer</option>
+                  </select>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -208,5 +277,72 @@ const s = {
     borderRadius: '4px',
     background: '#6366f1',
     transition: 'width 0.3s',
+  },
+  usersSection: {
+    width: '100%',
+    maxWidth: '900px',
+    marginTop: '40px',
+  },
+  sectionHeading: {
+    fontSize: '20px',
+    fontWeight: 700,
+    color: '#f1f5f9',
+    marginBottom: '16px',
+  },
+  usersTable: {
+    background: '#1e293b',
+    borderRadius: '12px',
+    overflow: 'hidden',
+  },
+  tableHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    padding: '12px 20px',
+    borderBottom: '1px solid rgba(255,255,255,0.06)',
+    fontSize: '12px',
+    fontWeight: 600,
+    textTransform: 'uppercase',
+    letterSpacing: '0.5px',
+    color: 'rgba(255,255,255,0.35)',
+  },
+  tableRow: {
+    display: 'flex',
+    alignItems: 'center',
+    padding: '14px 20px',
+    borderBottom: '1px solid rgba(255,255,255,0.04)',
+  },
+  tableCell: {
+    display: 'flex',
+    flexDirection: 'column',
+    minWidth: 0,
+  },
+  userName: {
+    fontSize: '14px',
+    fontWeight: 600,
+    color: '#e2e8f0',
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+  },
+  userEmail: {
+    fontSize: '12px',
+    color: 'rgba(255,255,255,0.35)',
+    marginTop: '2px',
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+  },
+  roleSelect: {
+    background: 'rgba(255,255,255,0.05)',
+    border: '1px solid',
+    borderRadius: '8px',
+    padding: '6px 10px',
+    fontSize: '13px',
+    fontWeight: 600,
+    fontFamily: 'inherit',
+    cursor: 'pointer',
+    outline: 'none',
+    appearance: 'auto',
+    maxWidth: '120px',
   },
 };

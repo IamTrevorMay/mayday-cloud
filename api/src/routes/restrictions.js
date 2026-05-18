@@ -126,4 +126,31 @@ router.put('/', adminGuard, async (req, res) => {
   }
 });
 
+// PUT /api/restrictions/admin/users/:id/role
+// Body: { role: 'admin' | 'member' | 'viewer' }
+router.put('/admin/users/:id/role', adminGuard, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { role } = req.body;
+    if (!role || !['admin', 'member', 'viewer'].includes(role)) {
+      return res.status(400).json({ error: 'role must be admin, member, or viewer' });
+    }
+
+    const sb = getSupabase();
+    const { data, error } = await sb
+      .from('profiles')
+      .update({ role })
+      .eq('id', id)
+      .select('id, email, display_name, role')
+      .single();
+
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'User not found' });
+
+    res.json(data);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 module.exports = router;

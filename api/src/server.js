@@ -209,14 +209,14 @@ app.get('/api/admin/health', requireRole('admin'), async (req, res) => {
   const checks = {};
 
   // API
-  checks.api = { ok: true };
+  checks.api = { ok: true, uptime_s: Math.floor(process.uptime()) };
 
   // NAS
   try {
     fs.accessSync(ASSETS_ROOT, fs.constants.R_OK | fs.constants.W_OK);
-    checks.nas = { ok: true, path: ASSETS_ROOT };
+    checks.nas = { connected: true, assetsRoot: ASSETS_ROOT };
   } catch {
-    checks.nas = { ok: false, path: ASSETS_ROOT };
+    checks.nas = { connected: false, assetsRoot: ASSETS_ROOT };
   }
 
   // Disk usage
@@ -227,9 +227,9 @@ app.get('/api/admin/health', requireRole('admin'), async (req, res) => {
     if (lines.length >= 2) {
       const parts = lines[1].split(/\s+/);
       checks.disk = {
-        total_gb: Math.round(parseInt(parts[1]) / 1024 / 1024),
-        used_gb: Math.round(parseInt(parts[2]) / 1024 / 1024),
-        available_gb: Math.round(parseInt(parts[3]) / 1024 / 1024),
+        total: parseInt(parts[1]) * 1024,
+        used: parseInt(parts[2]) * 1024,
+        available: parseInt(parts[3]) * 1024,
         percent: parts[4],
       };
     }
@@ -251,9 +251,9 @@ app.get('/api/admin/health', requireRole('admin'), async (req, res) => {
       .from('share_links')
       .select('id', { count: 'exact', head: true })
       .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`);
-    checks.active_shares = { count: count || 0 };
+    checks.shares = { active_count: count || 0 };
   } catch {
-    checks.active_shares = { error: 'Could not count shares' };
+    checks.shares = { error: 'Could not count shares' };
   }
 
   // API keys
@@ -267,8 +267,8 @@ app.get('/api/admin/health', requireRole('admin'), async (req, res) => {
     checks.active_api_keys = { error: 'Could not count keys' };
   }
 
-  const allOk = checks.api.ok && checks.nas.ok && !checks.disk?.error;
-  res.json({ ok: allOk, timestamp: new Date().toISOString(), checks });
+  const allOk = checks.api.ok && checks.nas.connected && !checks.disk?.error;
+  res.json({ ok: allOk, timestamp: new Date().toISOString(), ...checks });
 });
 
 app.listen(PORT, () => {
