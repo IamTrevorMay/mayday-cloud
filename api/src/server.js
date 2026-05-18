@@ -58,8 +58,10 @@ const globalLimiter = rateLimit({
 });
 const authLimiter = rateLimit({ windowMs: 60 * 1000, max: 10, standardHeaders: true, legacyHeaders: false, message: { error: 'Too many attempts, try again later' } });
 const dropUploadLimiter = rateLimit({ windowMs: 60 * 1000, max: 5, standardHeaders: true, legacyHeaders: false, message: { error: 'Upload rate limit exceeded' } });
+const resetPasswordLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 5, standardHeaders: true, legacyHeaders: false, message: { error: 'Too many reset requests, try again later' } });
 
 app.use(globalLimiter);
+app.use('/api/auth/reset-password', resetPasswordLimiter);
 app.use('/api/auth', authLimiter);
 app.use('/api/drop/:token/upload', dropUploadLimiter);
 

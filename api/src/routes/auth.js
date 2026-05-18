@@ -188,4 +188,24 @@ router.post('/studio', async (req, res) => {
   res.json({ session: cloudSession });
 });
 
+// ─── Self-service password reset ───
+router.post('/reset-password', async (req, res) => {
+  const { email } = req.body;
+  if (!email) {
+    return res.status(400).json({ error: 'Email is required' });
+  }
+
+  const sb = getCloudSupabase();
+  // Always return success to avoid leaking whether the email exists
+  try {
+    await sb.auth.resetPasswordForEmail(email, {
+      redirectTo: (process.env.WEB_URL || 'https://cloud.maydaystudio.net') + '/reset',
+    });
+  } catch {
+    // Swallow errors — don't reveal account existence
+  }
+
+  res.json({ success: true });
+});
+
 module.exports = router;

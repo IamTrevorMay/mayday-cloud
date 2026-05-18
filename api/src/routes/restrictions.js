@@ -153,4 +153,61 @@ router.put('/admin/users/:id/role', adminGuard, async (req, res) => {
   }
 });
 
+// POST /api/restrictions/admin/users/:id/reset-password — send password reset email (admin only)
+router.post('/admin/users/:id/reset-password', adminGuard, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const sb = getSupabase();
+
+    // Look up user email from profiles
+    const { data: profile, error: profileErr } = await sb
+      .from('profiles')
+      .select('email')
+      .eq('id', id)
+      .single();
+    if (profileErr || !profile) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const { error } = await sb.auth.admin.generateLink({
+      type: 'recovery',
+      email: profile.email,
+    });
+    if (error) throw error;
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// DELETE /api/restrictions/admin/users/:id — delete a user (admin only)
+router.delete('/admin/users/:id', adminGuard, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Prevent self-deletion
+    if (id === req.user.id) {
+      return res.status(400).json({ error: 'Cannot delete your own account' });
+    }
+
+    const sb = getSupabase();
+
+    // Delete from Supabase Auth
+    const { error: authErr } = await sb.auth.admin.deleteUser(id);
+    if (authErr) throw authErr;
+
+    // Delete profile row
+    const { error: profileErr } = await sb
+      .from('profiles')
+      .delete()
+      .eq('id', id);
+    if (profileErr) throw profileErr;
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 module.exports = router;

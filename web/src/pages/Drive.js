@@ -1625,6 +1625,9 @@ function SettingsView({ user, userRole, storageInfo, signOut, apiKeys, apiKeysLo
   const [allUsers, setAllUsers] = useState([]);
   const [usersLoading, setUsersLoading] = useState(false);
   const [roleUpdating, setRoleUpdating] = useState(null);
+  const [resetSent, setResetSent] = useState(false);
+  const [resetSending, setResetSending] = useState(null);
+  const [deleting, setDeleting] = useState(null);
   const percentColor = !storageInfo ? '#6366f1'
     : storageInfo.percent >= 90 ? '#ef4444'
     : storageInfo.percent >= 70 ? '#f59e0b'
@@ -1654,6 +1657,46 @@ function SettingsView({ user, userRole, storageInfo, signOut, apiKeys, apiKeysLo
     }
   }
 
+  async function handleSelfReset() {
+    setResetSent(false);
+    try {
+      await fetch(`${API_URL}/api/auth/reset-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: user?.email }),
+      });
+      setResetSent(true);
+    } catch {
+      alert('Failed to send reset email');
+    }
+  }
+
+  async function handleAdminReset(userId) {
+    setResetSending(userId);
+    try {
+      await authedFetch(`/api/restrictions/admin/users/${userId}/reset-password`, { method: 'POST' });
+      setResetSending('done-' + userId);
+      setTimeout(() => setResetSending(null), 2000);
+    } catch (err) {
+      alert('Failed to send reset email: ' + err.message);
+      setResetSending(null);
+    }
+  }
+
+  async function handleDeleteUser(userId) {
+    const target = allUsers.find(u => u.id === userId);
+    if (!window.confirm(`Delete ${target?.email || 'this user'}? This cannot be undone.`)) return;
+    setDeleting(userId);
+    try {
+      await authedFetch(`/api/restrictions/admin/users/${userId}`, { method: 'DELETE' });
+      setAllUsers(prev => prev.filter(u => u.id !== userId));
+    } catch (err) {
+      alert('Failed to delete user: ' + err.message);
+    } finally {
+      setDeleting(null);
+    }
+  }
+
   function copyKey(key) {
     navigator.clipboard.writeText(key);
     setCopiedKey(key);
@@ -1669,6 +1712,15 @@ function SettingsView({ user, userRole, storageInfo, signOut, apiKeys, apiKeysLo
         <div style={s.detailMeta}>
           <div style={s.detailRow}><span style={s.detailLabel}>Email</span><span>{user?.email}</span></div>
           <div style={s.detailRow}><span style={s.detailLabel}>Joined</span><span>{user?.created_at ? formatDate(user.created_at) : '—'}</span></div>
+          <div style={{ ...s.detailRow, marginTop: '4px' }}>
+            <span style={s.detailLabel}>Password</span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              {resetSent
+                ? <span style={{ fontSize: '12px', color: '#4ade80' }}>Reset link sent to your email</span>
+                : <button onClick={handleSelfReset} style={s.smallBtn}>Reset Password</button>
+              }
+            </span>
+          </div>
         </div>
 
         {/* Storage bar */}
@@ -1792,31 +1844,47 @@ function SettingsView({ user, userRole, storageInfo, signOut, apiKeys, apiKeysLo
                         </div>
                       )}
                     </div>
-                    <select
-                      value={u.role}
-                      onChange={e => handleRoleChange(u.id, e.target.value)}
-                      disabled={roleUpdating === u.id}
-                      style={{
-                        background: 'rgba(255,255,255,0.05)',
-                        border: '1px solid',
-                        borderColor: ROLE_COLORS[u.role] || '#64748b',
-                        borderRadius: '8px',
-                        padding: '5px 8px',
-                        fontSize: '12px',
-                        fontWeight: 600,
-                        fontFamily: 'inherit',
-                        color: ROLE_COLORS[u.role] || '#e2e8f0',
-                        cursor: 'pointer',
-                        outline: 'none',
-                        opacity: roleUpdating === u.id ? 0.5 : 1,
-                        flexShrink: 0,
-                        marginLeft: '12px',
-                      }}
-                    >
-                      <option value="admin">Admin</option>
-                      <option value="member">Member</option>
-                      <option value="viewer">Viewer</option>
-                    </select>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0, marginLeft: '12px' }}>
+                      <select
+                        value={u.role}
+                        onChange={e => handleRoleChange(u.id, e.target.value)}
+                        disabled={roleUpdating === u.id}
+                        style={{
+                          background: 'rgba(255,255,255,0.05)',
+                          border: '1px solid',
+                          borderColor: ROLE_COLORS[u.role] || '#64748b',
+                          borderRadius: '8px',
+                          padding: '5px 8px',
+                          fontSize: '12px',
+                          fontWeight: 600,
+                          fontFamily: 'inherit',
+                          color: ROLE_COLORS[u.role] || '#e2e8f0',
+                          cursor: 'pointer',
+                          outline: 'none',
+                          opacity: roleUpdating === u.id ? 0.5 : 1,
+                        }}
+                      >
+                        <option value="admin">Admin</option>
+                        <option value="member">Member</option>
+                        <option value="viewer">Viewer</option>
+                      </select>
+                      <button
+                        onClick={() => handleAdminReset(u.id)}
+                        disabled={resetSending === u.id}
+                        style={{ ...s.smallBtn, opacity: resetSending === u.id ? 0.5 : 1 }}
+                      >
+                        {resetSending === 'done-' + u.id ? 'Sent!' : 'Reset PW'}
+                      </button>
+                      {u.id !== user?.id && (
+                        <button
+                          onClick={() => handleDeleteUser(u.id)}
+                          disabled={deleting === u.id}
+                          style={{ ...s.smallBtn, color: '#fca5a5', borderColor: 'rgba(252,165,165,0.2)', opacity: deleting === u.id ? 0.5 : 1 }}
+                        >
+                          {deleting === u.id ? 'Deleting...' : 'Delete'}
+                        </button>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>
