@@ -6,8 +6,8 @@ Personal cloud storage platform backed by a 60TB Yotamaster NAS rack.
 
 ## Architecture
 
-- **Web**: React 18 + Craco SPA, deployed to Vercel at `cloud.maydaystudio.net`
-- **API**: Express 4, runs on work machine via pm2 at `cloud-api.maydaystudio.net` (port 4000)
+- **Web**: React 18 + Craco SPA, deployed to Vercel at `www.mayday.systems`
+- **API**: Express 4, runs on work machine via pm2 (name: `mayday-api`) at `cloud-api.maydaystudio.net` (port 4000)
 - **Auth/DB**: Supabase (separate project from Studio Hub)
 - **Storage**: Yotamaster NAS via USB-C, mounted at `/Volumes/May Server`
 - **Client**: Node.js CLI for desktop folder sync
@@ -62,6 +62,12 @@ See `api/.env.example` and `web/.env.example` for required config.
 
 ## Deploy
 
-- **Web**: Push to main -> Vercel auto-deploys
-- **API**: `pm2 start api/src/server.js --name mayday-cloud-api`
+- **Web**: Vercel project is `web` (NOT `mayday-cloud`). Domain: `www.mayday.systems`. After push, deploy with `npx vercel --prod` (linked to `web` project via `.vercel/project.json`). The GitHub auto-deploy integration is NOT connected — deploy manually.
+- **API**: `pm2 restart mayday-api` (process name is `mayday-api`, not `mayday-cloud-api`). Script: `api/src/server.js`, cwd: `api/`.
 - **Desktop**: Push tag `desktop-v*` -> GitHub Actions builds, signs, notarizes, and publishes the universal DMG to GitHub Releases. See [desktop/RELEASE.md](./desktop/RELEASE.md).
+
+## Vercel Notes
+
+- `vercel.json` in repo root configures: build from `web/`, output `web/build`, SPA rewrites for client-side routing.
+- The old `mayday-cloud` Vercel project has been deleted. Only the `web` project remains.
+- Always deploy with `npx vercel --prod` from the repo root after pushing.
