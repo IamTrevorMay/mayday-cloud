@@ -96,6 +96,7 @@ const tusServer = new TusServer({
   path: '/api/nas/tus',
   datastore: new FileStore({ directory: tusStaging }),
   maxSize: 10 * 1024 * 1024 * 1024, // 10GB
+  respectForwardedHeaders: true,
   // @tus/server v2: callbacks receive (req, upload) where req is a Web API
   // Request and upload has { id, metadata, size, offset, storage }.
   async onUploadCreate(req, upload) {

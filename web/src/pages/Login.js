@@ -1,14 +1,17 @@
 import React, { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 
+const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:4000';
+
 export default function Login() {
   const { signInWithPassword, signUp, signInWithStudio } = useAuth();
-  const [mode, setMode] = useState('login'); // 'login' | 'signup' | 'studio'
+  const [mode, setMode] = useState('login'); // 'login' | 'signup' | 'studio' | 'forgot'
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [resetSent, setResetSent] = useState(false);
 
   async function handleLogin(e) {
     e.preventDefault();
@@ -41,12 +44,30 @@ export default function Login() {
     if (error) setError(error.message);
   }
 
+  async function handleForgot(e) {
+    e.preventDefault();
+    setError(null);
+    setLoading(true);
+    try {
+      await fetch(`${API_URL}/api/auth/reset-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+      setResetSent(true);
+    } catch {
+      setError('Failed to send reset email');
+    }
+    setLoading(false);
+  }
+
   function switchMode(newMode) {
     setMode(newMode);
     setError(null);
     setEmail('');
     setPassword('');
     setDisplayName('');
+    setResetSent(false);
   }
 
   return (
@@ -104,6 +125,47 @@ export default function Login() {
               {loading ? 'Signing in...' : 'Sign In'}
             </button>
             {error && <div style={s.error}>{error}</div>}
+            <button type="button" onClick={() => switchMode('forgot')} style={s.backLink}>
+              Forgot password?
+            </button>
+          </form>
+        )}
+
+        {/* ─── Forgot Password ─── */}
+        {mode === 'forgot' && (
+          <form onSubmit={handleForgot} style={s.form}>
+            {resetSent ? (
+              <>
+                <div style={{ fontSize: '14px', color: '#4ade80', textAlign: 'center' }}>
+                  If an account exists for that email, a reset link has been sent.
+                </div>
+                <button type="button" onClick={() => switchMode('login')} style={s.button}>
+                  Back to Sign In
+                </button>
+              </>
+            ) : (
+              <>
+                <div style={{ fontSize: '13px', color: 'rgba(255,255,255,0.4)', textAlign: 'center' }}>
+                  Enter your email and we'll send you a reset link.
+                </div>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={e => setEmail(e.target.value)}
+                  placeholder="Email"
+                  required
+                  style={s.input}
+                  autoFocus
+                />
+                <button type="submit" disabled={loading} style={s.button}>
+                  {loading ? 'Sending...' : 'Send Reset Link'}
+                </button>
+                {error && <div style={s.error}>{error}</div>}
+                <button type="button" onClick={() => switchMode('login')} style={s.backLink}>
+                  Back to Sign In
+                </button>
+              </>
+            )}
           </form>
         )}
 
