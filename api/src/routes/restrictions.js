@@ -169,9 +169,8 @@ router.post('/admin/users/:id/reset-password', adminGuard, async (req, res) => {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    const { error } = await sb.auth.admin.generateLink({
-      type: 'recovery',
-      email: profile.email,
+    const { error } = await sb.auth.resetPasswordForEmail(profile.email, {
+      redirectTo: (process.env.WEB_URL || 'https://www.mayday.systems') + '/reset',
     });
     if (error) throw error;
 

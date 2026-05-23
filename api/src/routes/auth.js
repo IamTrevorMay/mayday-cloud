@@ -197,12 +197,11 @@ router.post('/reset-password', async (req, res) => {
 
   const sb = getCloudSupabase();
   // Always return success to avoid leaking whether the email exists
-  try {
-    await sb.auth.resetPasswordForEmail(email, {
-      redirectTo: (process.env.WEB_URL || 'https://cloud.maydaystudio.net') + '/reset',
-    });
-  } catch {
-    // Swallow errors — don't reveal account existence
+  const { error } = await sb.auth.resetPasswordForEmail(email, {
+    redirectTo: (process.env.WEB_URL || 'https://www.mayday.systems') + '/reset',
+  });
+  if (error) {
+    console.error('[auth] resetPasswordForEmail failed:', error.message);
   }
 
   res.json({ success: true });
