@@ -33,7 +33,8 @@ supabase/     Migration files
 ## Key Patterns
 
 - **Auth**: Email/password sign-up/sign-in on Cloud's own Supabase, plus "Sign in with Mayday Studio" flow that bridges to Studio Hub's Supabase. API also accepts `mck_*` API keys. Role cache with 5-min TTL.
-- **Uploads**: Small files (<5MB) via multer POST, large files via TUS resumable protocol (up to 10GB).
+- **Uploads**: Small files (<5MB) via multer POST, large files via TUS resumable protocol (up to 10GB). TUS and WebDAV endpoints are excluded from the global rate limiter.
+- **Password Reset**: Self-service via `/api/auth/reset-password` (public), admin-triggered via `/api/restrictions/admin/users/:id/reset-password`. Frontend reset page at `/reset`. Uses Supabase `resetPasswordForEmail` with Resend SMTP.
 - **Soft deletes**: Files move to `.trash/` with timestamp prefix, restorable.
 - **Thumbnails**: Sharp (images) + ffmpeg (video frames), cached by SHA256(path:mtime) in `.thumbs/`.
 - **Path safety**: All user paths sanitized and verified within ASSETS_ROOT.
@@ -63,7 +64,7 @@ See `api/.env.example` and `web/.env.example` for required config.
 ## Deploy
 
 - **Web**: Vercel project is `web` (NOT `mayday-cloud`). Domain: `www.mayday.systems`. After push, deploy with `npx vercel --prod` (linked to `web` project via `.vercel/project.json`). The GitHub auto-deploy integration is NOT connected — deploy manually.
-- **API**: `pm2 restart mayday-api` (process name is `mayday-api`, not `mayday-cloud-api`). Script: `api/src/server.js`, cwd: `api/`.
+- **API**: `pm2 restart mayday-api` (process name is `mayday-api`, not `mayday-cloud-api`). Script: `api/src/server.js`, cwd: `api/`. API is behind Cloudflare proxy; TUS server uses `respectForwardedHeaders: true`.
 - **Desktop**: Push tag `desktop-v*` -> GitHub Actions builds, signs, notarizes, and publishes the universal DMG to GitHub Releases. See [desktop/RELEASE.md](./desktop/RELEASE.md).
 
 ## Vercel Notes

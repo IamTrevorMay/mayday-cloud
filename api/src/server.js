@@ -54,7 +54,7 @@ app.use(express.json());
 // ─── Rate limiting ───
 const globalLimiter = rateLimit({
   windowMs: 60 * 1000, max: 100, standardHeaders: true, legacyHeaders: false,
-  skip: (req) => req.originalUrl.startsWith('/api/webdav'),
+  skip: (req) => req.originalUrl.startsWith('/api/webdav') || req.originalUrl.startsWith('/api/nas/tus'),
 });
 const authLimiter = rateLimit({ windowMs: 60 * 1000, max: 10, standardHeaders: true, legacyHeaders: false, message: { error: 'Too many attempts, try again later' } });
 const dropUploadLimiter = rateLimit({ windowMs: 60 * 1000, max: 5, standardHeaders: true, legacyHeaders: false, message: { error: 'Upload rate limit exceeded' } });
