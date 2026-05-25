@@ -1,4 +1,5 @@
 const express = require('express');
+const crypto = require('crypto');
 const router = express.Router();
 const { createClient } = require('@supabase/supabase-js');
 const { requireRole } = require('../middleware/auth');
@@ -175,6 +176,87 @@ router.post('/admin/users/:id/reset-password', adminGuard, async (req, res) => {
     if (error) throw error;
 
     res.json({ success: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// POST /api/restrictions/admin/users — create a user (admin only)
+router.post('/admin/users', adminGuard, async (req, res) => {
+  try {
+    const { email, display_name, role } = req.body;
+    if (!email) return res.status(400).json({ error: 'email is required' });
+
+    const sb = getSupabase();
+    const randomPassword = crypto.randomBytes(32).toString('hex');
+
+    const { data: authData, error: authErr } = await sb.auth.admin.createUser({
+      email,
+      password: randomPassword,
+      email_confirm: true,
+    });
+    if (authErr) throw authErr;
+
+    const userId = authData.user.id;
+
+    // Update profile with display_name and role if provided
+    const updates = {};
+    if (display_name) updates.display_name = display_name;
+    if (role && role !== 'member') updates.role = role;
+
+    if (Object.keys(updates).length > 0) {
+      const { error: profileErr } = await sb
+        .from('profiles')
+        .update(updates)
+        .eq('id', userId);
+      if (profileErr) console.error('Profile update warning:', profileErr.message);
+    }
+
+    // Fetch the final profile
+    const { data: profile } = await sb
+      .from('profiles')
+      .select('id, email, display_name, role')
+      .eq('id', userId)
+      .single();
+
+    res.json(profile || { id: userId, email, display_name: display_name || null, role: role || 'member' });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// PUT /api/restrictions/admin/users/:id/folders — batch set blocked folders (admin only)
+router.put('/admin/users/:id/folders', adminGuard, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { blocked_folders } = req.body;
+    if (!Array.isArray(blocked_folders)) {
+      return res.status(400).json({ error: 'blocked_folders must be an array' });
+    }
+
+    const sb = getSupabase();
+
+    // Delete all existing user_folder_restrictions for this user
+    const { error: deleteErr } = await sb
+      .from('user_folder_restrictions')
+      .delete()
+      .eq('user_id', id);
+    if (deleteErr) throw deleteErr;
+
+    // Insert new rows for each blocked folder
+    if (blocked_folders.length > 0) {
+      const rows = blocked_folders.map(path => ({
+        user_id: id,
+        folder_path: path,
+        created_by: req.user.id,
+      }));
+      const { error: insertErr } = await sb
+        .from('user_folder_restrictions')
+        .insert(rows);
+      if (insertErr) throw insertErr;
+    }
+
+    res.json({ success: true, user_id: id, blocked_folders });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
