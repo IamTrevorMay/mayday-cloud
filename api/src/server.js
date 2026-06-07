@@ -54,16 +54,19 @@ app.use(express.json());
 // ─── Rate limiting ───
 const globalLimiter = rateLimit({
   windowMs: 60 * 1000, max: 100, standardHeaders: true, legacyHeaders: false,
-  skip: (req) => req.originalUrl.startsWith('/api/webdav') || req.originalUrl.startsWith('/api/nas/tus'),
+  skip: (req) => req.originalUrl.startsWith('/api/webdav') || req.originalUrl.startsWith('/api/nas/tus')
+    || (req.method === 'GET' && req.originalUrl.startsWith('/api/nas/')),
 });
 const authLimiter = rateLimit({ windowMs: 60 * 1000, max: 10, standardHeaders: true, legacyHeaders: false, message: { error: 'Too many attempts, try again later' } });
 const dropUploadLimiter = rateLimit({ windowMs: 60 * 1000, max: 5, standardHeaders: true, legacyHeaders: false, message: { error: 'Upload rate limit exceeded' } });
 const resetPasswordLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 5, standardHeaders: true, legacyHeaders: false, message: { error: 'Too many reset requests, try again later' } });
+const nasBrowseLimiter = rateLimit({ windowMs: 60 * 1000, max: 600, standardHeaders: true, legacyHeaders: false, message: { error: 'Too many requests, slow down' } });
 
 app.use(globalLimiter);
 app.use('/api/auth/reset-password', resetPasswordLimiter);
 app.use('/api/auth', authLimiter);
 app.use('/api/drop/:token/upload', dropUploadLimiter);
+app.use('/api/nas/', (req, res, next) => { if (req.method === 'GET') return nasBrowseLimiter(req, res, next); next(); });
 
 // ─── Structured request logging ───
 app.use((req, res, next) => {

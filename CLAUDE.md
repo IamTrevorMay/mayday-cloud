@@ -72,3 +72,7 @@ See `api/.env.example` and `web/.env.example` for required config.
 - `vercel.json` in repo root configures: build from `web/`, output `web/build`, SPA rewrites for client-side routing.
 - The old `mayday-cloud` Vercel project has been deleted. Only the `web` project remains.
 - Always deploy with `npx vercel --prod` from the repo root after pushing.
+
+## Workflow Rules
+
+- **Clarify before coding**: When the user suggests a change, always ask clarifying questions using the AskUserQuestion tool (multiple choice selector) before starting any implementation work. Do not assume intent — confirm scope, approach, and any ambiguities first.
