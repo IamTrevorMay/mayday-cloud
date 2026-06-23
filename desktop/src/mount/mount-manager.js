@@ -6,11 +6,12 @@ const { findRclone, obscurePassword } = require('./rclone');
 const config = require('../sync/config');
 
 const DEFAULT_MOUNT_POINT = process.platform === 'darwin'
-  ? '/Volumes/Mayday Cloud'
+  ? path.join(require('os').homedir(), 'Mayday Cloud')
   : process.platform === 'win32'
     ? 'M:'
     : path.join(require('os').homedir(), 'mayday-cloud-mount');
 
+const NFS_PORT = 9049; // High port so no sudo needed
 const MAX_RESTART_DELAY = 60000;
 
 // Internal deps — overridable for testing
@@ -19,6 +20,7 @@ const _deps = {
   execSync,
   mkdirSync: fs.mkdirSync,
   accessSync: fs.accessSync,
+  readdirSync: fs.readdirSync,
   findRclone,
   obscurePassword,
   configLoad: config.load.bind(config),
@@ -27,11 +29,12 @@ const _deps = {
 class MountManager extends EventEmitter {
   constructor() {
     super();
-    this._process = null;
-    this._state = 'stopped'; // stopped | starting | mounted | error
+    this._process = null;      // rclone serve nfs process (macOS) or rclone mount process
+    this._state = 'stopped';   // stopped | starting | mounted | error
     this._restartCount = 0;
     this._restartTimer = null;
     this._stopping = false;
+    this._mountPoint = null;   // Track mount point for unmount
   }
 
   get state() { return this._state; }
@@ -39,6 +42,8 @@ class MountManager extends EventEmitter {
 
   /**
    * Start the rclone mount.
+   * On macOS, uses rclone serve nfs + mount_nfs (no FUSE/kext required).
+   * On other platforms, uses rclone mount with FUSE.
    * @param {object} opts
    * @param {string} opts.apiUrl - WebDAV base URL (e.g. https://cloud-api.maydaystudio.net/api/webdav)
    * @param {string} opts.apiKey - mck_* API key
@@ -86,12 +91,24 @@ class MountManager extends EventEmitter {
       throw new Error(`Failed to obscure API key: ${err.message}`);
     }
 
+    this._mountPoint = mountPoint;
     const webdavUrl = apiUrl.replace(/\/$/, '');
 
+    if (process.platform === 'darwin') {
+      await this._startNfs(rclonePath, { webdavUrl, obscuredKey, mountPoint, cacheSize, remotePath });
+    } else {
+      await this._startFuse(rclonePath, { webdavUrl, obscuredKey, mountPoint, cacheSize, remotePath, opts });
+    }
+  }
+
+  /**
+   * macOS: Start rclone serve nfs, then mount via mount_nfs.
+   * No FUSE or kernel extensions required.
+   */
+  async _startNfs(rclonePath, { webdavUrl, obscuredKey, mountPoint, cacheSize, remotePath }) {
     const args = [
-      'mount',
+      'serve', 'nfs',
       `:webdav:${remotePath}`,
-      mountPoint,
       `--webdav-url=${webdavUrl}`,
       '--webdav-user=apikey',
       `--webdav-pass=${obscuredKey}`,
@@ -107,16 +124,142 @@ class MountManager extends EventEmitter {
       '--vfs-write-back=5s',
       '--transfers=4',
       '--no-checksum',
-      // Prevent rclone from checking for updates
-      '--no-check-certificate=false',
-      // Logging
+      `--addr=localhost:${NFS_PORT}`,
       '--log-level=NOTICE',
     ];
 
-    // Platform-specific flags
-    if (process.platform === 'darwin') {
-      args.push(`--volname=Mayday Cloud`);
+    this._process = _deps.spawn(rclonePath, args, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
+
+    let nfsReady = false;
+
+    this._process.stdout.on('data', (data) => {
+      const line = data.toString().trim();
+      if (line) this.emit('log', line);
+    });
+
+    this._process.stderr.on('data', (data) => {
+      const line = data.toString().trim();
+      if (line) {
+        this.emit('log', `[err] ${line}`);
+        // Detect NFS server ready
+        if (line.includes('NFS Server running')) {
+          nfsReady = true;
+        }
+      }
+    });
+
+    this._process.on('close', (code) => {
+      this._process = null;
+      // Unmount if still mounted
+      this._unmountNfs(mountPoint);
+
+      if (this._stopping) {
+        this._setState('stopped');
+        return;
+      }
+      if (code !== 0) {
+        this.emit('log', `rclone exited with code ${code}`);
+        this._setState('error');
+        this._scheduleRestart({ apiUrl: webdavUrl, apiKey: '', mountPoint, cacheSize, remotePath });
+      } else {
+        this._setState('stopped');
+      }
+    });
+
+    let spawnErrored = false;
+    this._process.on('error', (err) => {
+      spawnErrored = true;
+      this._process = null;
+      this.emit('log', `rclone spawn error: ${err.message}`);
+      this._setState('error');
+    });
+
+    // Wait for NFS server to be ready
+    const serverReady = await new Promise((resolve) => {
+      const timeout = setTimeout(() => resolve(false), 10000);
+      const check = setInterval(() => {
+        if (nfsReady) {
+          clearInterval(check);
+          clearTimeout(timeout);
+          resolve(true);
+        }
+        if (spawnErrored) {
+          clearInterval(check);
+          clearTimeout(timeout);
+          resolve(false);
+        }
+      }, 200);
+      this._process?.once('close', () => {
+        clearInterval(check);
+        clearTimeout(timeout);
+        resolve(false);
+      });
+    });
+
+    if (!serverReady) {
+      this.emit('log', 'NFS server failed to start');
+      this._setState('error');
+      return;
     }
+
+    // Mount via mount_nfs
+    try {
+      _deps.execSync(
+        `mount_nfs -o "vers=3,tcp,nolocks,locallocks,port=${NFS_PORT},mountport=${NFS_PORT}" localhost:/ "${mountPoint}"`,
+        { timeout: 10000 }
+      );
+    } catch (err) {
+      this.emit('log', `mount_nfs failed: ${err.message}`);
+      // Kill the NFS server since mount failed
+      try { this._process.kill('SIGTERM'); } catch { /* ignore */ }
+      this._process = null;
+      this._setState('error');
+      return;
+    }
+
+    // Verify the mount is accessible
+    try {
+      _deps.readdirSync(mountPoint);
+      this._setState('mounted');
+      this._restartCount = 0;
+      this.emit('log', `Mounted at ${mountPoint} via NFS`);
+    } catch (err) {
+      this.emit('log', `Mount verification failed: ${err.message}`);
+      this._unmountNfs(mountPoint);
+      try { this._process.kill('SIGTERM'); } catch { /* ignore */ }
+      this._process = null;
+      this._setState('error');
+    }
+  }
+
+  /**
+   * Non-macOS: Start rclone mount with FUSE (original approach).
+   */
+  async _startFuse(rclonePath, { webdavUrl, obscuredKey, mountPoint, cacheSize, remotePath, opts }) {
+    const args = [
+      'mount',
+      `:webdav:${remotePath}`,
+      mountPoint,
+      `--webdav-url=${webdavUrl}`,
+      '--webdav-user=apikey',
+      `--webdav-pass=${obscuredKey}`,
+      '--webdav-bearer-token=false',
+      '--vfs-cache-mode=full',
+      `--vfs-cache-max-size=${cacheSize}`,
+      '--vfs-read-chunk-size=128M',
+      '--vfs-read-ahead=512M',
+      '--buffer-size=256M',
+      '--vfs-cache-max-age=72h',
+      '--dir-cache-time=30s',
+      '--vfs-write-back=5s',
+      '--transfers=4',
+      '--no-checksum',
+      '--no-check-certificate=false',
+      '--log-level=NOTICE',
+    ];
 
     this._process = _deps.spawn(rclonePath, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -127,7 +270,6 @@ class MountManager extends EventEmitter {
       const line = data.toString().trim();
       if (line) {
         this.emit('log', line);
-        // rclone logs "Mounting on" when the mount is ready
         if (line.includes('Mounting on') || line.includes('vfs cache')) {
           this._setState('mounted');
           this._restartCount = 0;
@@ -139,7 +281,6 @@ class MountManager extends EventEmitter {
       const line = data.toString().trim();
       if (line) {
         this.emit('log', `[err] ${line}`);
-        // Detect common errors
         if (line.includes('mount helper error') || line.includes('FUSE')) {
           this.emit('fuseError', line);
         }
@@ -148,16 +289,14 @@ class MountManager extends EventEmitter {
 
     this._process.on('close', (code) => {
       this._process = null;
-
       if (this._stopping) {
         this._setState('stopped');
         return;
       }
-
       if (code !== 0) {
         this.emit('log', `rclone exited with code ${code}`);
         this._setState('error');
-        this._scheduleRestart(opts);
+        if (opts) this._scheduleRestart(opts);
       } else {
         this._setState('stopped');
       }
@@ -167,15 +306,14 @@ class MountManager extends EventEmitter {
       this._process = null;
       this.emit('log', `rclone spawn error: ${err.message}`);
       this._setState('error');
-      if (!this._stopping) {
+      if (!this._stopping && opts) {
         this._scheduleRestart(opts);
       }
     });
 
-    // Wait a moment for the mount to establish, then verify
+    // Wait for mount to establish
     await new Promise((resolve) => {
       const timeout = setTimeout(() => {
-        // If still starting after 10s, verify mount point is actually accessible
         if (this._state === 'starting') {
           try {
             _deps.accessSync(mountPoint);
@@ -216,29 +354,21 @@ class MountManager extends EventEmitter {
       return;
     }
 
-    // Try graceful unmount first
-    const mountPoint = this._getMountPointFromArgs();
+    const mountPoint = this._mountPoint;
 
-    if (process.platform === 'win32') {
-      try {
-        this._process.kill('SIGTERM');
-      } catch { /* ignore */ }
-    } else {
-      // On macOS/Linux, try umount then SIGTERM
-      if (mountPoint) {
-        try {
-          _deps.execSync(`umount "${mountPoint}" 2>/dev/null || true`, { timeout: 5000 });
-        } catch { /* ignore */ }
-      }
-      try {
-        this._process.kill('SIGTERM');
-      } catch { /* ignore */ }
+    // Unmount the filesystem first
+    if (mountPoint && process.platform !== 'win32') {
+      this._unmountNfs(mountPoint);
     }
+
+    // Kill the rclone process
+    try {
+      this._process.kill('SIGTERM');
+    } catch { /* ignore */ }
 
     // Wait for process to exit
     await new Promise((resolve) => {
       const timeout = setTimeout(() => {
-        // Force kill if still running
         if (this._process) {
           try { this._process.kill('SIGKILL'); } catch { /* ignore */ }
         }
@@ -257,8 +387,16 @@ class MountManager extends EventEmitter {
     });
 
     this._process = null;
+    this._mountPoint = null;
     this._setState('stopped');
     this._restartCount = 0;
+  }
+
+  _unmountNfs(mountPoint) {
+    if (!mountPoint) return;
+    try {
+      _deps.execSync(`umount "${mountPoint}" 2>/dev/null || true`, { timeout: 5000 });
+    } catch { /* ignore */ }
   }
 
   _setState(state) {
@@ -266,17 +404,6 @@ class MountManager extends EventEmitter {
       this._state = state;
       this.emit('stateChange', state);
     }
-  }
-
-  _getMountPointFromArgs() {
-    if (!this._process || !this._process.spawnargs) return null;
-    // The mount point is the third argument (after 'rclone', 'mount', ':webdav:/')
-    const args = this._process.spawnargs;
-    const mountIdx = args.indexOf('mount');
-    if (mountIdx >= 0 && args.length > mountIdx + 2) {
-      return args[mountIdx + 2];
-    }
-    return null;
   }
 
   _scheduleRestart(opts) {
@@ -287,7 +414,6 @@ class MountManager extends EventEmitter {
     this._restartTimer = setTimeout(() => {
       this._restartTimer = null;
       if (!this._stopping) {
-        // Bug 9: Reload config for fresh opts instead of using stale closure variable
         let freshOpts = opts;
         try {
           const cfg = _deps.configLoad();
@@ -306,7 +432,6 @@ class MountManager extends EventEmitter {
         }
         this.start(freshOpts).catch((err) => {
           this.emit('log', `Restart failed: ${err.message}`);
-          // Bug 4: Set error state when restart fails
           this._setState('error');
         });
       }
@@ -314,4 +439,4 @@ class MountManager extends EventEmitter {
   }
 }
 
-module.exports = { MountManager, DEFAULT_MOUNT_POINT, _deps };
+module.exports = { MountManager, DEFAULT_MOUNT_POINT, NFS_PORT, _deps };

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 
-const GITHUB_REPO = 'trevor-may/mayday-cloud';
+const GITHUB_REPO = 'IamTrevorMay/mayday-cloud';
 
 function detectOS() {
   const p = navigator.platform?.toLowerCase() || '';

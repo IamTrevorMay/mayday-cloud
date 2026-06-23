@@ -1905,8 +1905,8 @@ const DESKTOP_RELEASE_API = 'https://api.github.com/repos/IamTrevorMay/mayday-cl
 const DESKTOP_RELEASE_CACHE_KEY = 'maydaycloud.desktopRelease';
 const DESKTOP_RELEASE_CACHE_TTL_MS = 60 * 60 * 1000;
 const DESKTOP_RELEASE_FALLBACK = {
-  version: 'v0.1.0',
-  url: 'https://github.com/IamTrevorMay/mayday-cloud/releases/tag/v0.1.0',
+  version: 'v0.2.0',
+  url: 'https://github.com/IamTrevorMay/mayday-cloud/releases/tag/desktop-v0.2.0',
 };
 
 function Sidebar({ user, activeView, onNavigate }) {

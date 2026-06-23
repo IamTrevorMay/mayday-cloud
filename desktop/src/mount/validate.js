@@ -10,9 +10,13 @@ const _deps = {
 /**
  * Validate a mount point path before use.
  * @param {string} mountPath
+ * @param {object} [options]
+ * @param {boolean} [options.allowNonEmpty=false] - Allow non-empty directories (for NFS mounts)
  * @returns {{ valid: boolean, error?: string }}
  */
-function validateMountPoint(mountPath) {
+function validateMountPoint(mountPath, options = {}) {
+  const { allowNonEmpty = false } = options;
+
   if (!mountPath || typeof mountPath !== 'string') {
     return { valid: false, error: 'Mount point is required' };
   }
@@ -47,8 +51,8 @@ function validateMountPoint(mountPath) {
       if (stat.isFile()) {
         return { valid: false, error: 'Mount point is a file, not a directory' };
       }
-      // If it's a non-empty directory, it's already in use
-      if (stat.isDirectory()) {
+      // If it's a non-empty directory, reject unless NFS mode (mounts over existing dir)
+      if (!allowNonEmpty && stat.isDirectory()) {
         const entries = _deps.readdirSync(trimmed);
         if (entries.length > 0) {
           return { valid: false, error: 'Mount point directory is not empty' };

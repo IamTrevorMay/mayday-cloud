@@ -174,16 +174,17 @@ async function stopSync() {
 
 async function autoStartMount(cfg) {
   try {
-    // Validate mount point before attempting
-    const validation = validateMountPoint(cfg.mountPoint);
+    const validation = validateMountPoint(cfg.mountPoint, { allowNonEmpty: process.platform === 'darwin' });
     if (!validation.valid) {
       throw new Error(validation.error);
     }
 
-    // Check rclone mount support
-    const mountSupport = rclone.checkMountSupport();
-    if (!mountSupport.supported) {
-      throw new Error(mountSupport.error || 'rclone mount not supported');
+    // Only check FUSE/rclone mount support on non-macOS (macOS uses NFS)
+    if (process.platform !== 'darwin') {
+      const mountSupport = rclone.checkMountSupport();
+      if (!mountSupport.supported) {
+        throw new Error(mountSupport.error || 'rclone mount not supported');
+      }
     }
 
     const webdavUrl = cfg.apiUrl.replace(/\/$/, '') + '/api/webdav';
@@ -197,7 +198,6 @@ async function autoStartMount(cfg) {
     logger.info(`Mount started at ${cfg.mountPoint}`);
   } catch (err) {
     logger.error('Mount auto-start failed:', err.message);
-    // Bug 3: Notify renderer of auto-start failure
     if (mb && mb.window && !mb.window.isDestroyed()) {
       mb.window.webContents.send('mount:autoStartFailed', err.message);
     }
@@ -404,16 +404,18 @@ ipcMain.handle('mount:start', async () => {
     return { success: false, error: 'Not configured — set up sync first' };
   }
 
-  // Bug 1: Validate mount point before starting
-  const validation = validateMountPoint(cfg.mountPoint);
+  // On macOS, NFS mounts over existing directories, so allow non-empty
+  const validation = validateMountPoint(cfg.mountPoint, { allowNonEmpty: process.platform === 'darwin' });
   if (!validation.valid) {
     return { success: false, error: validation.error };
   }
 
-  // Bug 5: Check rclone mount support
-  const mountSupport = rclone.checkMountSupport();
-  if (!mountSupport.supported) {
-    return { success: false, error: mountSupport.error || 'rclone mount not supported' };
+  // Only check FUSE/rclone mount support on non-macOS (macOS uses NFS now)
+  if (process.platform !== 'darwin') {
+    const mountSupport = rclone.checkMountSupport();
+    if (!mountSupport.supported) {
+      return { success: false, error: mountSupport.error || 'rclone mount not supported' };
+    }
   }
 
   try {
@@ -477,9 +479,8 @@ ipcMain.handle('mount:updateConfig', async (_event, updates) => {
   const cfg = config.load();
   if (!cfg) return { success: false, error: 'Not configured' };
 
-  // Bug 8: Validate mount point before saving
   if (updates.mountPoint !== undefined) {
-    const validation = validateMountPoint(updates.mountPoint);
+    const validation = validateMountPoint(updates.mountPoint, { allowNonEmpty: process.platform === 'darwin' });
     if (!validation.valid) {
       return { success: false, error: validation.error };
     }

@@ -5,7 +5,7 @@ let CONFIG_DIR = path.join(require('os').homedir(), '.mayday-cloud');
 let CONFIG_PATH = path.join(CONFIG_DIR, 'config.json');
 
 const DEFAULT_MOUNT_POINT = process.platform === 'darwin'
-  ? '/Volumes/Mayday Cloud'
+  ? path.join(require('os').homedir(), 'Mayday Cloud')
   : process.platform === 'win32'
     ? 'M:'
     : path.join(require('os').homedir(), 'mayday-cloud-mount');
