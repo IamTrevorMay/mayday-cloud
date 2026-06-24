@@ -53,16 +53,23 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION="${GITHUB_REF#refs/tags/desktop-v}"
-          # Find the draft release created by electron-builder (tagged v$VERSION)
-          RELEASE_ID=$(gh api repos/${{ github.repository }}/releases \
-            --jq ".[] | select(.draft==true and .tag_name==\"v${VERSION}\") | .id" | head -1)
-          if [ -n "$RELEASE_ID" ]; then
+          # electron-builder creates duplicate draft releases (one per parallel upload).
+          # Find the one with the most assets (the DMG), publish it, and delete the rest.
+          DRAFTS=$(gh api repos/${{ github.repository }}/releases \
+            --jq "[.[] | select(.draft==true and .tag_name==\"v${VERSION}\")] | sort_by(.assets | length) | reverse | .[].id")
+          PRIMARY=$(echo "$DRAFTS" | head -1)
+          if [ -n "$PRIMARY" ]; then
             # Retag to match our desktop-v* convention and publish
-            gh api repos/${{ github.repository }}/releases/$RELEASE_ID \
+            gh api repos/${{ github.repository }}/releases/$PRIMARY \
               --method PATCH \
               --field tag_name="desktop-v${VERSION}" \
               --field draft=false
             echo "Published release desktop-v${VERSION}"
+            # Delete duplicate drafts and orphan tag
+            echo "$DRAFTS" | tail -n +2 | while read id; do
+              [ -n "$id" ] && gh api repos/${{ github.repository }}/releases/$id --method DELETE
+            done
+            gh api repos/${{ github.repository }}/git/refs/tags/v${VERSION} --method DELETE 2>/dev/null || true
           else
             echo "No draft release found for v${VERSION}"
             exit 1
