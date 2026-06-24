@@ -1,3 +1,4 @@
+const fs = require('fs');
 const path = require('path');
 const api = require('./api');
 const db = require('./db');
@@ -42,6 +43,7 @@ describe('UploadQueue', () => {
 
   describe('ENOENT handling in _processUpload', () => {
     it('skips retries and removes from DB on ENOENT', async () => {
+      vi.spyOn(fs, 'existsSync').mockReturnValue(true);
       vi.spyOn(db, 'markSyncing').mockImplementation(() => {});
       vi.spyOn(db, 'removeFile').mockImplementation(() => {});
       vi.spyOn(db, 'markError').mockImplementation(() => {});
@@ -61,6 +63,7 @@ describe('UploadQueue', () => {
     });
 
     it('skips retries on ENOENT in error message (no code)', async () => {
+      vi.spyOn(fs, 'existsSync').mockReturnValue(true);
       vi.spyOn(db, 'markSyncing').mockImplementation(() => {});
       vi.spyOn(db, 'removeFile').mockImplementation(() => {});
       vi.spyOn(db, 'markError').mockImplementation(() => {});
@@ -79,6 +82,7 @@ describe('UploadQueue', () => {
     });
 
     it('retries non-ENOENT errors normally', async () => {
+      vi.spyOn(fs, 'existsSync').mockReturnValue(true);
       vi.spyOn(db, 'markSyncing').mockImplementation(() => {});
       vi.spyOn(db, 'removeFile').mockImplementation(() => {});
       vi.spyOn(db, 'markError').mockImplementation(() => {});

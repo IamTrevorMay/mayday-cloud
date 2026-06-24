@@ -18,6 +18,12 @@ class UploadQueue {
     this._drainResolve = null;
   }
 
+  /** Check if a file is queued for upload or actively uploading */
+  has(relPath) {
+    if (this.activeUploads.has(relPath)) return true;
+    return this.queue.some(j => !j.isDelete && j.relPath === relPath);
+  }
+
   enqueue(localRoot, relPath, size) {
     this.queue.push({ localRoot, relPath, size, attempt: 0 });
     this._tick();
@@ -89,6 +95,13 @@ class UploadQueue {
       logger.info(`Synced: ${relPath}`);
     } catch (err) {
       this.activeUploads.delete(relPath);
+      const isEnoent = err.code === 'ENOENT' || err.message.includes('ENOENT');
+      if (isEnoent) {
+        logger.warn(`File vanished during upload: ${relPath}`);
+        db.removeFile(relPath);
+        db.logAction(relPath, 'skip', 'file deleted during upload');
+        return;
+      }
       if (job.attempt < MAX_RETRIES - 1) {
         const delay = RETRY_DELAYS[job.attempt];
         logger.warn(`Upload failed for ${relPath}, retrying in ${delay / 1000}s (attempt ${job.attempt + 1}/${MAX_RETRIES}): ${err.message}`);

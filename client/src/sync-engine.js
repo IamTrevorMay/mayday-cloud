@@ -129,6 +129,12 @@ class SyncEngine {
       return;
     }
 
+    // Skip if file is already queued or actively uploading
+    if (this.queue.has(relPath)) {
+      logger.debug(`Skipping ${relPath}: already queued`);
+      return;
+    }
+
     // Skip if file is already synced and unchanged (avoids re-enqueuing
     // files the watcher fires for right after startup sync processed them)
     const existing = db.getFile(relPath);

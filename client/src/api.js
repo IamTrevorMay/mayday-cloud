@@ -120,8 +120,18 @@ async function deleteRemote(config, remotePath) {
   }
 }
 
+/**
+ * Pick a resumable TUS upload if the file size still matches.
+ * Returns the first previous upload when sizes match, or null.
+ */
+function pickResumableUpload(prev, fileSize) {
+  if (prev.length === 0) return null;
+  return prev[0].size === fileSize ? prev[0] : null;
+}
+
 module.exports = {
   checkHealth, listRemote, mkdirRemote,
   uploadSmall, uploadTus, deleteRemote,
+  pickResumableUpload,
   SMALL_FILE_THRESHOLD,
 };

@@ -17,6 +17,7 @@ beforeEach(() => {
   vi.spyOn(db, 'markError').mockImplementation(() => {});
   vi.spyOn(db, 'removeFile').mockImplementation(() => {});
   vi.spyOn(db, 'logAction').mockImplementation(() => {});
+  vi.spyOn(db, 'getFile').mockReturnValue(null);
 });
 
 describe('SyncEngine', () => {
@@ -95,7 +96,7 @@ describe('SyncEngine', () => {
       await engine._handleAddChange('deleted.txt', '/local/deleted.txt');
 
       expect(db.upsertFile).not.toHaveBeenCalled();
-      expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('Error handling file'));
+      expect(logger.error).not.toHaveBeenCalled();
     });
   });
 });
