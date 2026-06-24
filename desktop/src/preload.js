@@ -33,6 +33,14 @@ contextBridge.exposeInMainWorld('mayday', {
   mountPickMountPoint: () => ipcRenderer.invoke('mount:pickMountPoint'),
   mountUpdateConfig: (updates) => ipcRenderer.invoke('mount:updateConfig', updates),
 
+  // Updates
+  checkForUpdate: () => ipcRenderer.invoke('update:check'),
+  installUpdate: () => ipcRenderer.invoke('update:install'),
+  getUpdateStatus: () => ipcRenderer.invoke('update:status'),
+  onUpdateStatus: (callback) => {
+    ipcRenderer.on('update:status', (_event, status) => callback(status));
+  },
+
   // Status updates (push from main)
   onStatusUpdate: (callback) => {
     ipcRenderer.on('sync:statusUpdate', (_event, status) => callback(status));

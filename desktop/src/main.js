@@ -381,6 +381,23 @@ ipcMain.handle('open:preferences', () => {
   showPreferences();
 });
 
+// ─── Update IPC Handlers ───
+
+ipcMain.handle('update:check', () => {
+  const updater = require('./auto-updater');
+  return updater.checkNow();
+});
+
+ipcMain.handle('update:install', () => {
+  const updater = require('./auto-updater');
+  updater.installNow();
+});
+
+ipcMain.handle('update:status', () => {
+  const updater = require('./auto-updater');
+  return updater.getStatus();
+});
+
 // ─── Mount IPC Handlers ───
 
 ipcMain.handle('mount:checkDeps', () => {
@@ -538,7 +555,17 @@ function showPreferences() {
 
 app.on('ready', () => {
   createMenubar();
-  require('./auto-updater').init();
+
+  const updater = require('./auto-updater');
+  updater.onStatus((status) => {
+    // Forward update state changes to renderer
+    if (mb && mb.window && !mb.window.isDestroyed()) {
+      mb.window.webContents.send('update:status', status);
+    }
+    // Rebuild tray menu so the label stays current
+    tray.setUpdateState(status.state);
+  });
+  updater.init();
 });
 
 app.on('window-all-closed', (e) => {

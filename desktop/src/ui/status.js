@@ -233,3 +233,70 @@ setInterval(refreshMount, 5000);
 
 // Initial mount status
 refreshMount();
+
+// ─── Update Footer ───
+
+function updateUpdateUI(status) {
+  const text = $('#update-text');
+  const btn = $('#update-btn');
+  const ver = status.currentVersion ? `v${status.currentVersion}` : '';
+
+  // Reset classes
+  text.className = 'update-text';
+  btn.className = 'update-btn';
+  btn.style.display = '';
+  text.onclick = null;
+
+  switch (status.state) {
+    case 'checking':
+      text.textContent = `${ver} \u00b7 Checking for updates\u2026`;
+      btn.classList.add('spinning');
+      btn.disabled = true;
+      break;
+    case 'available':
+      text.textContent = `${ver} \u00b7 Update available` +
+        (status.availableVersion ? ` (v${status.availableVersion})` : '');
+      btn.disabled = false;
+      break;
+    case 'downloading':
+      text.textContent = `Downloading update\u2026 ${status.progress || 0}%`;
+      btn.classList.add('spinning');
+      btn.disabled = true;
+      break;
+    case 'ready':
+      text.textContent = 'Update ready \u2014 click to restart';
+      text.classList.add('ready', 'clickable');
+      text.onclick = () => window.mayday.installUpdate();
+      btn.style.display = 'none';
+      break;
+    case 'error':
+      text.textContent = `${ver} \u00b7 Update check failed`;
+      btn.disabled = false;
+      break;
+    default:
+      text.textContent = `${ver} \u00b7 Up to date`;
+      btn.disabled = false;
+      break;
+  }
+}
+
+$('#update-btn').addEventListener('click', () => {
+  window.mayday.checkForUpdate();
+});
+
+// Listen for push updates from main
+if (window.mayday.onUpdateStatus) {
+  window.mayday.onUpdateStatus((status) => updateUpdateUI(status));
+}
+
+// Initial fetch
+async function refreshUpdate() {
+  try {
+    const status = await window.mayday.getUpdateStatus();
+    if (status) updateUpdateUI(status);
+  } catch {
+    // update API not available
+  }
+}
+
+refreshUpdate();

@@ -5,6 +5,7 @@ const fs = require('fs');
 let trayInstance = null;
 let mbInstance = null;
 let currentState = 'idle';
+let currentUpdateState = 'idle';
 let onPause = null;
 let onResume = null;
 let onPreferences = null;
@@ -38,8 +39,14 @@ function setState(state) {
   trayInstance.setToolTip(TOOLTIPS[state] || 'Mayday Cloud');
 }
 
+function setUpdateState(updateState) {
+  currentUpdateState = updateState;
+}
+
 function buildContextMenu() {
   const isPaused = currentState === 'paused';
+
+  const updateItem = buildUpdateMenuItem();
 
   return Menu.buildFromTemplate([
     {
@@ -63,6 +70,8 @@ function buildContextMenu() {
       },
     },
     { type: 'separator' },
+    updateItem,
+    { type: 'separator' },
     {
       label: 'Preferences...',
       click: () => {
@@ -80,4 +89,31 @@ function buildContextMenu() {
   ]);
 }
 
-module.exports = { setup, setState };
+function buildUpdateMenuItem() {
+  const updater = require('./auto-updater');
+
+  switch (currentUpdateState) {
+    case 'checking':
+      return { label: 'Checking for Updates...', enabled: false };
+    case 'available':
+    case 'downloading':
+      return { label: 'Downloading Update...', enabled: false };
+    case 'ready':
+      return {
+        label: 'Update Available — Restart',
+        click: () => updater.installNow(),
+      };
+    case 'error':
+      return {
+        label: 'Check for Updates (last check failed)',
+        click: () => updater.checkNow(),
+      };
+    default:
+      return {
+        label: 'Check for Updates',
+        click: () => updater.checkNow(),
+      };
+  }
+}
+
+module.exports = { setup, setState, setUpdateState };
