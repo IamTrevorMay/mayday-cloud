@@ -1,6 +1,6 @@
 {
   "name": "mayday-cloud-desktop",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Mayday Cloud desktop sync app",
   "main": "src/main.js",
   "author": "Mayday Studio",
