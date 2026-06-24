@@ -23,6 +23,44 @@ All stabilization phases (1–7) are complete. The platform is stable with:
 
 ### Long-term
 
+#### Raspberry Pi Server Migration
+
+Migrate the API server off the Mac Studio onto a headless Raspberry Pi. Only the `api/` layer moves — the web frontend stays on Vercel, desktop/client apps are unchanged.
+
+**Why**: Frees up the Mac Studio, reduces the server to a dedicated low-power appliance. The API is lightweight Node.js with no macOS-specific dependencies.
+
+**Hardware**:
+- Raspberry Pi 4 or 5 (ARM64)
+- Boot from USB SSD (not SD card — avoids write-wear from thumbnails, TUS staging, trash)
+- Yotamaster NAS connected directly via USB 3.0
+- Ethernet to local network
+
+**Software**:
+- Raspberry Pi OS Lite 64-bit (headless, no desktop)
+- Node.js 22, ffmpeg, pm2
+- All npm dependencies work on ARM64 Linux — sharp has prebuilt binaries, everything else is pure JS
+
+**Setup flow**:
+1. Flash OS onto USB SSD, boot Pi, enable SSH
+2. Plug in Yotamaster via USB, verify it mounts read/write (e.g. at `/mnt/nas`)
+3. Install Node.js, ffmpeg (`apt install ffmpeg`), pm2 (`npm i -g pm2`)
+4. Clone repo (or copy `api/`), `npm install`, create `.env` with `ASSETS_ROOT=/mnt/nas`
+5. `pm2 start src/server.js --name mayday-api`, then `pm2 startup && pm2 save`
+6. Point Cloudflare tunnel to Pi's local IP — `cloud-api.maydaystudio.net` resolves to Pi
+7. Test: web app, desktop app, and client all work without changes (same API URL)
+
+**Config changes**:
+- `ASSETS_ROOT=/mnt/nas` (was `/Volumes/May Server`)
+- All Supabase keys, CORS origins, etc. copied from existing `api/.env`
+- DNS/Cloudflare updated to point to Pi
+
+**No code changes required** — purely an infrastructure move.
+
+**Verify before committing**:
+- Yotamaster mounts as standard USB mass storage on Linux (no special drivers)
+- `fs.renameSync()` works atomically on the mounted filesystem (needed for TUS uploads)
+- ffmpeg ARM64 handles all video formats used (mp4, mov, avi, mkv, webm)
+
 ## Known Issues
 
 - Auth middleware drop-path check is fragile — coupling between mount ordering and path check should be documented
