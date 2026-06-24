@@ -21,9 +21,7 @@ module.exports = {
     gatekeeperAssess: false,
     entitlements: 'build/entitlements.mac.plist',
     entitlementsInherit: 'build/entitlements.mac.plist',
-    notarize: process.env.APPLE_TEAM_ID
-      ? { teamId: process.env.APPLE_TEAM_ID }
-      : false,
+    notarize: !!process.env.APPLE_TEAM_ID,
   },
   dmg: {
     title: 'Mayday Cloud ${version}',
