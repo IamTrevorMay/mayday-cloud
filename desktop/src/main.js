@@ -61,7 +61,7 @@ function createMenubar() {
     showDockIcon: false,
     browserWindow: {
       width: 320,
-      height: 400,
+      height: 440,
       resizable: false,
       skipTaskbar: true,
       backgroundColor: '#0f1117',
