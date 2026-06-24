@@ -35,6 +35,7 @@ module.exports = {
       provider: 'github',
       owner: 'IamTrevorMay',
       repo: 'mayday-cloud',
+      releaseType: 'release',
     },
   ],
 };
