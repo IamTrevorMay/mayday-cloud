@@ -1,3 +1,6 @@
+const path = require('path');
+const fs = require('fs');
+
 module.exports = {
   appId: 'systems.mayday.cloud',
   productName: 'Mayday Cloud',
@@ -29,6 +32,26 @@ module.exports = {
       { x: 130, y: 220, type: 'file' },
       { x: 410, y: 220, type: 'link', path: '/Applications' },
     ],
+  },
+  afterPack: async (context) => {
+    // Copy the arch-specific rclone binary into the app bundle.
+    // electron-builder Arch enum: 1 = x64, 3 = arm64
+    const arch = context.arch === 3 ? 'arm64' : 'x64';
+    const src = path.join(__dirname, 'vendor', `rclone-darwin-${arch}`);
+    if (!fs.existsSync(src)) {
+      console.warn(`rclone binary not found at ${src} — skipping bundle`);
+      return;
+    }
+    const dest = path.join(
+      context.appOutDir,
+      'Mayday Cloud.app',
+      'Contents',
+      'Resources',
+      'rclone'
+    );
+    fs.copyFileSync(src, dest);
+    fs.chmodSync(dest, 0o755);
+    console.log(`Bundled rclone (${arch}) → ${dest}`);
   },
   publish: [
     {

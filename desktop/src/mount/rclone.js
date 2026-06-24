@@ -34,6 +34,15 @@ let _cachedPath = null;
 function findRclone() {
   if (_cachedPath) return _cachedPath;
 
+  // Check for bundled binary first (packaged Electron app)
+  try {
+    const bundled = path.join(process.resourcesPath, 'rclone');
+    if (_deps.existsSync(bundled)) {
+      _cachedPath = bundled;
+      return bundled;
+    }
+  } catch { /* process.resourcesPath may not exist in dev */ }
+
   // Check known locations first (ordered by preference — official binary before Homebrew)
   for (const p of SEARCH_PATHS) {
     if (p && _deps.existsSync(p)) {

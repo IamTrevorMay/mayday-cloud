@@ -6,9 +6,11 @@ const rclone = require('./rclone');
 const { _deps } = rclone;
 
 let origDeps;
+let origResourcesPath;
 
 beforeEach(() => {
   origDeps = { ..._deps };
+  origResourcesPath = process.resourcesPath;
   _deps.execSync = vi.fn();
   _deps.existsSync = vi.fn(() => false);
   rclone._resetCache();
@@ -16,6 +18,7 @@ beforeEach(() => {
 
 afterEach(() => {
   Object.assign(_deps, origDeps);
+  process.resourcesPath = origResourcesPath;
   rclone._resetCache();
 });
 
@@ -40,6 +43,21 @@ describe('findRclone', () => {
     _deps.execSync.mockReturnValue('/custom/bin/rclone\n');
     const result = rclone.findRclone();
     expect(result).toBe('/custom/bin/rclone');
+  });
+
+  it('prefers the bundled binary when process.resourcesPath is set', () => {
+    process.resourcesPath = '/fake/resources';
+    const bundledPath = '/fake/resources/rclone';
+    _deps.existsSync.mockImplementation((p) => p === bundledPath);
+    const result = rclone.findRclone();
+    expect(result).toBe(bundledPath);
+  });
+
+  it('falls through to system paths when bundled binary is missing', () => {
+    process.resourcesPath = '/fake/resources';
+    _deps.existsSync.mockImplementation((p) => p === '/usr/local/bin/rclone');
+    const result = rclone.findRclone();
+    expect(result).toBe('/usr/local/bin/rclone');
   });
 
   it('caches the result after first call', () => {
