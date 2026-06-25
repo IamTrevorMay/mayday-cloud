@@ -59,8 +59,11 @@ Mount tuning is maxed; remaining wins are editor- and infra-side:
 - **Premiere proxies** — edit low-res copies, relink full-res on export. The
   real fix for 4K over a 20–36 MB/s pipe. Editor-side, no code change.
 - **Cache pre-warming** — preload a project's media so it's local before scrubbing.
-- **Cloudflare bypass for editors** — a DNS-only (grey-cloud) subdomain drops the
-  ~190ms CF→origin leg. Trade-off: exposes origin IP, loses CF TLS/DDoS.
+- **Cloudflare bypass for mount (shipped)** — `fast.maydaystudio.net` DNS-only
+  (grey-cloud) subdomain with Caddy TLS. Desktop app has a `mountApiUrl` config
+  field (Preferences → Mount API URL) so the rclone mount bypasses Cloudflare
+  while the web UI / normal API traffic stays proxied. Trade-off: exposes origin
+  IP, loses CF TLS/DDoS on that subdomain.
 - **Disable NAS drive sleep** — suspected cause of the multi-second cold-read
   stalls (drive spin-up). Check Yotamaster power/standby settings.
 - **Confirm NAS-site uplink** — 20–36 MB/s may be the upload ceiling there; if so

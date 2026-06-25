@@ -193,6 +193,7 @@ async function loadMountSettings() {
     const autoCheck = $('#mount-autostart-check');
 
     if (status.mountPoint) input.value = status.mountPoint;
+    if (status.mountApiUrl) $('#mount-api-url-input').value = status.mountApiUrl;
     if (status.mountAutoStart) autoCheck.checked = true;
 
     // Check deps
@@ -236,6 +237,7 @@ $('#mount-save-btn').addEventListener('click', async () => {
   try {
     const result = await window.mayday.mountUpdateConfig({
       mountPoint: $('#mount-point-input').value,
+      mountApiUrl: $('#mount-api-url-input').value,
       mountCacheSize: $('#mount-cache-select').value,
       mountAutoStart: $('#mount-autostart-check').checked,
     });

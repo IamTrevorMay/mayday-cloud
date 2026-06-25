@@ -426,7 +426,8 @@ class MountManager extends EventEmitter {
         try {
           const cfg = _deps.configLoad();
           if (cfg && cfg.apiKey && cfg.apiUrl) {
-            const webdavUrl = cfg.apiUrl.replace(/\/$/, '') + '/api/webdav';
+            const baseUrl = (cfg.mountApiUrl || cfg.apiUrl).replace(/\/$/, '');
+            const webdavUrl = baseUrl + '/api/webdav';
             freshOpts = {
               apiUrl: webdavUrl,
               apiKey: cfg.apiKey,

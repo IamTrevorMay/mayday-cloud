@@ -187,7 +187,8 @@ async function autoStartMount(cfg) {
       }
     }
 
-    const webdavUrl = cfg.apiUrl.replace(/\/$/, '') + '/api/webdav';
+    const baseUrl = (cfg.mountApiUrl || cfg.apiUrl).replace(/\/$/, '');
+    const webdavUrl = baseUrl + '/api/webdav';
     await mountManager.start({
       apiUrl: webdavUrl,
       apiKey: cfg.apiKey,
@@ -436,7 +437,8 @@ ipcMain.handle('mount:start', async () => {
   }
 
   try {
-    const webdavUrl = cfg.apiUrl.replace(/\/$/, '') + '/api/webdav';
+    const baseUrl = (cfg.mountApiUrl || cfg.apiUrl).replace(/\/$/, '');
+    const webdavUrl = baseUrl + '/api/webdav';
     await mountManager.start({
       apiUrl: webdavUrl,
       apiKey: cfg.apiKey,
@@ -475,6 +477,7 @@ ipcMain.handle('mount:status', () => {
     mountPoint: cfg?.mountPoint || null,
     mountEnabled: cfg?.mountEnabled || false,
     mountAutoStart: cfg?.mountAutoStart || false,
+    mountApiUrl: cfg?.mountApiUrl || '',
   };
 });
 
@@ -506,6 +509,7 @@ ipcMain.handle('mount:updateConfig', async (_event, updates) => {
   if (updates.mountCacheSize !== undefined) cfg.mountCacheSize = updates.mountCacheSize;
   if (updates.mountAutoStart !== undefined) cfg.mountAutoStart = updates.mountAutoStart;
   if (updates.mountRemotePath !== undefined) cfg.mountRemotePath = updates.mountRemotePath;
+  if (updates.mountApiUrl !== undefined) cfg.mountApiUrl = updates.mountApiUrl;
 
   config.save(cfg);
 

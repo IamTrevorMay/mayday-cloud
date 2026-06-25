@@ -47,6 +47,14 @@ describe('config.load', () => {
     expect(loaded.syncMode).toBe('upload-only');
     expect(loaded.mountEnabled).toBe(false);
     expect(loaded.mountCacheSize).toBe('auto');
+    expect(loaded.mountApiUrl).toBe('');
+  });
+
+  it('preserves mountApiUrl when set in config', () => {
+    const cfg = { apiUrl: 'https://example.com', apiKey: 'mck_123', mountApiUrl: 'https://fast.maydaystudio.net' };
+    fs.writeFileSync(path.join(tmpDir, 'config.json'), JSON.stringify(cfg), 'utf8');
+    const loaded = config.load();
+    expect(loaded.mountApiUrl).toBe('https://fast.maydaystudio.net');
   });
 });
 

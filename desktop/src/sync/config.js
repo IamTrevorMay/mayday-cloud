@@ -19,6 +19,7 @@ const DEFAULTS = {
   syncMode: 'upload-only',   // 'upload-only' | 'bidirectional'
   syncFolders: [],            // empty = sync everything under remoteFolder
   // Virtual drive mount settings
+  mountApiUrl: '',
   mountEnabled: false,
   mountPoint: DEFAULT_MOUNT_POINT,
   mountCacheSize: 'auto',
