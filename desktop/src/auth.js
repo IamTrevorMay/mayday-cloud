@@ -1,4 +1,5 @@
 const { createClient } = require('@supabase/supabase-js');
+const WebSocket = require('ws');
 const os = require('os');
 
 // Supabase public config (anon key is safe to embed — it's a public key)
@@ -11,7 +12,9 @@ let supabase = null;
 
 function getSupabase() {
   if (!supabase) {
-    supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      realtime: { transport: WebSocket },
+    });
   }
   return supabase;
 }
