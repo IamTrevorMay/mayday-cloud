@@ -19,7 +19,10 @@ module.exports = {
   mac: {
     category: 'public.app-category.productivity',
     icon: 'assets/icon.icns',
-    target: [{ target: 'dmg', arch: ['universal'] }],
+    target: [
+      { target: 'dmg', arch: ['universal'] },
+      { target: 'zip', arch: ['universal'] },
+    ],
     hardenedRuntime: true,
     gatekeeperAssess: false,
     entitlements: 'build/entitlements.mac.plist',
