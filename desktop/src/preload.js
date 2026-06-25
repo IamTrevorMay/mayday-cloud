@@ -57,4 +57,10 @@ contextBridge.exposeInMainWorld('mayday', {
   onMountHealthCheckFailed: (callback) => {
     ipcRenderer.on('mount:healthCheckFailed', (_event, error) => callback(error));
   },
+
+  // Cache pre-warm
+  cachePickFolder: () => ipcRenderer.invoke('cache:pickFolder'),
+  cacheStart: (folderPath) => ipcRenderer.invoke('cache:start', folderPath),
+  cacheStop: () => ipcRenderer.invoke('cache:stop'),
+  onCacheProgress: (cb) => ipcRenderer.on('cache:progress', (_e, data) => cb(data)),
 });

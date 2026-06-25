@@ -13,6 +13,7 @@ const rclone = require('./mount/rclone');
 const fuseCheck = require('./mount/fuse-check');
 const { validateMountPoint } = require('./mount/validate');
 const { MountHealthMonitor } = require('./mount/health');
+const { CacheWarmer } = require('./mount/cache-warmer');
 
 // Single instance lock
 const gotLock = app.requestSingleInstanceLock();
@@ -31,6 +32,7 @@ let setupWindow = null;
 let prefsWindow = null;
 const mountManager = new MountManager();
 const healthMonitor = new MountHealthMonitor();
+let cacheWarmer = null;
 
 function getIcon() {
   const assetsDir = path.join(__dirname, '..', 'assets');
@@ -519,6 +521,69 @@ ipcMain.handle('mount:updateConfig', async (_event, updates) => {
     await autoStartMount(cfg);
   }
 
+  return { success: true };
+});
+
+// ─── Cache Pre-Warm IPC Handlers ───
+
+ipcMain.handle('cache:pickFolder', async () => {
+  const cfg = config.load();
+  const defaultPath = cfg?.mountPoint || '/Volumes';
+  const result = await dialog.showOpenDialog({
+    properties: ['openDirectory'],
+    title: 'Choose Folder to Pre-warm',
+    defaultPath,
+  });
+  if (result.canceled) return null;
+  return result.filePaths[0];
+});
+
+ipcMain.handle('cache:start', async (_event, folderPath) => {
+  const cfg = config.load();
+  if (!cfg || !cfg.mountPoint) {
+    return { success: false, error: 'Mount not configured' };
+  }
+
+  if (cacheWarmer && cacheWarmer.running) {
+    cacheWarmer.stop();
+  }
+
+  cacheWarmer = new CacheWarmer(cfg.mountPoint);
+
+  cacheWarmer.on('progress', (data) => {
+    if (mb && mb.window && !mb.window.isDestroyed()) {
+      mb.window.webContents.send('cache:progress', data);
+    }
+  });
+
+  cacheWarmer.on('done', () => {
+    if (mb && mb.window && !mb.window.isDestroyed()) {
+      mb.window.webContents.send('cache:progress', {
+        current: cacheWarmer._total,
+        total: cacheWarmer._total,
+        currentFile: null,
+        bytesWarmed: cacheWarmer._bytesTotal,
+        bytesTotal: cacheWarmer._bytesTotal,
+      });
+    }
+  });
+
+  cacheWarmer.on('error', (err) => {
+    logger.error(`[cache-warm] ${err.message}`);
+  });
+
+  try {
+    await cacheWarmer.start(folderPath);
+    return { success: true, total: cacheWarmer._total, bytesTotal: cacheWarmer._bytesTotal };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('cache:stop', () => {
+  if (cacheWarmer) {
+    cacheWarmer.stop();
+  }
   return { success: true };
 });
 

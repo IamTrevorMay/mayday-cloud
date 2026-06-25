@@ -55,6 +55,16 @@
         <button class="btn mount-toggle-btn" id="mount-toggle-btn" style="width:auto;padding:6px 14px;font-size:12px">Mount</button>
       </div>
       <div id="mount-status-text" class="mount-status-text"></div>
+      <div id="cache-warm-row" style="display:none;margin-top:6px">
+        <button class="btn btn-secondary" id="cache-warm-btn" style="width:100%;padding:6px 14px;font-size:12px">Pre-warm Cache</button>
+      </div>
+      <div id="cache-warm-progress" style="display:none;margin-top:6px">
+        <div style="font-size:11px;color:rgba(255,255,255,0.5)" id="cache-warm-text">Warming...</div>
+        <div style="height:4px;background:rgba(255,255,255,0.08);border-radius:2px;margin-top:4px;overflow:hidden">
+          <div id="cache-warm-bar" style="height:100%;width:0%;background:#6366f1;border-radius:2px;transition:width 0.3s"></div>
+        </div>
+        <button class="btn btn-secondary" id="cache-warm-cancel" style="width:100%;padding:4px 10px;font-size:11px;margin-top:4px">Cancel</button>
+      </div>
       <div id="mount-deps-warning" class="mount-deps-warning" style="display:none"></div>
     </div>
 

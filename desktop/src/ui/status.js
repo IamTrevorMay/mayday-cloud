@@ -106,11 +106,14 @@ $('#pause-btn').addEventListener('click', async () => {
 // ─── Mount Section ───
 
 let mountBusy = false;
+let cacheWarmActive = false;
 
 function updateMountUI(status) {
   const dot = $('#mount-dot');
   const text = $('#mount-status-text');
   const btn = $('#mount-toggle-btn');
+
+  const cacheRow = $('#cache-warm-row');
 
   switch (status.state) {
     case 'mounted':
@@ -118,18 +121,21 @@ function updateMountUI(status) {
       text.textContent = status.mountPoint || 'Mounted';
       btn.textContent = 'Unmount';
       btn.disabled = false;
+      if (!cacheWarmActive) cacheRow.style.display = '';
       break;
     case 'starting':
       dot.className = 'status-dot syncing';
       text.textContent = 'Connecting...';
       btn.textContent = 'Unmount';
       btn.disabled = true;
+      cacheRow.style.display = 'none';
       break;
     case 'error':
       dot.className = 'status-dot error';
       text.textContent = 'Mount error';
       btn.textContent = 'Retry';
       btn.disabled = false;
+      cacheRow.style.display = 'none';
       break;
     default:
       dot.className = 'status-dot';
@@ -137,6 +143,7 @@ function updateMountUI(status) {
       text.textContent = 'Not mounted';
       btn.textContent = 'Mount';
       btn.disabled = false;
+      cacheRow.style.display = 'none';
   }
 }
 
@@ -205,7 +212,13 @@ $('#mount-toggle-btn').addEventListener('click', async () => {
 
 // Listen for mount state changes pushed from main
 if (window.mayday.onMountStateChange) {
-  window.mayday.onMountStateChange(() => refreshMount());
+  window.mayday.onMountStateChange((state) => {
+    refreshMount();
+    if (state !== 'mounted' && cacheWarmActive) {
+      window.mayday.cacheStop();
+      resetCacheWarmUI();
+    }
+  });
 }
 
 // Listen for mount auto-start failures
@@ -233,6 +246,61 @@ setInterval(refreshMount, 5000);
 
 // Initial mount status
 refreshMount();
+
+// ─── Cache Pre-Warm ───
+
+function formatBytes(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  return (bytes / (1024 * 1024 * 1024)).toFixed(1) + ' GB';
+}
+
+function resetCacheWarmUI() {
+  cacheWarmActive = false;
+  $('#cache-warm-progress').style.display = 'none';
+  $('#cache-warm-row').style.display = '';
+  $('#cache-warm-bar').style.width = '0%';
+  $('#cache-warm-text').textContent = 'Warming...';
+  $('#cache-warm-cancel').style.display = '';
+}
+
+$('#cache-warm-btn').addEventListener('click', async () => {
+  const folder = await window.mayday.cachePickFolder();
+  if (!folder) return;
+
+  cacheWarmActive = true;
+  $('#cache-warm-row').style.display = 'none';
+  $('#cache-warm-progress').style.display = '';
+  $('#cache-warm-text').textContent = 'Scanning files...';
+  $('#cache-warm-bar').style.width = '0%';
+
+  const result = await window.mayday.cacheStart(folder);
+  if (!result.success) {
+    $('#cache-warm-text').textContent = result.error || 'Failed to start';
+    setTimeout(resetCacheWarmUI, 3000);
+  }
+});
+
+$('#cache-warm-cancel').addEventListener('click', async () => {
+  await window.mayday.cacheStop();
+  resetCacheWarmUI();
+});
+
+if (window.mayday.onCacheProgress) {
+  window.mayday.onCacheProgress((data) => {
+    const pct = data.total > 0 ? Math.round((data.current / data.total) * 100) : 0;
+    $('#cache-warm-bar').style.width = pct + '%';
+    $('#cache-warm-text').textContent =
+      `Warming ${data.current}/${data.total} files (${formatBytes(data.bytesWarmed)} / ${formatBytes(data.bytesTotal)})`;
+
+    if (data.current >= data.total) {
+      $('#cache-warm-text').textContent = 'Cache warmed!';
+      $('#cache-warm-cancel').style.display = 'none';
+      setTimeout(resetCacheWarmUI, 3000);
+    }
+  });
+}
 
 // ─── Update Footer ───
 
