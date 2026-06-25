@@ -26,6 +26,8 @@ const defaultOpts = {
 beforeEach(() => {
   origDeps = { ..._deps };
   origPlatform = Object.getOwnPropertyDescriptor(process, 'platform');
+  // Default to macOS so NFS tests work on any CI platform
+  Object.defineProperty(process, 'platform', { value: 'darwin' });
   _deps.spawn = vi.fn();
   _deps.execSync = vi.fn();
   _deps.mkdirSync = vi.fn();
