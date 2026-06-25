@@ -8,8 +8,8 @@ let origDeps;
 
 beforeEach(() => {
   origDeps = { ..._deps };
-  _deps.accessSync = vi.fn();
-  _deps.readdirSync = vi.fn(() => []);
+  // Mock execFile: default success (no error)
+  _deps.execFile = vi.fn((_cmd, _args, _opts, cb) => cb(null));
   vi.useFakeTimers();
 });
 
@@ -31,8 +31,8 @@ describe('MountHealthMonitor', () => {
     monitor.stop();
   });
 
-  it('emits healthCheckFailed when mount is inaccessible', () => {
-    _deps.accessSync.mockImplementation(() => { throw new Error('ENOENT'); });
+  it('emits healthCheckFailed when subprocess returns error', () => {
+    _deps.execFile = vi.fn((_cmd, _args, _opts, cb) => cb(new Error('ENOENT')));
 
     const monitor = new MountHealthMonitor(1000);
     const errors = [];
@@ -46,9 +46,12 @@ describe('MountHealthMonitor', () => {
     monitor.stop();
   });
 
-  it('emits healthCheckFailed when readdirSync fails', () => {
-    _deps.accessSync.mockImplementation(() => {});
-    _deps.readdirSync.mockImplementation(() => { throw new Error('Permission denied'); });
+  it('emits healthCheckFailed with timeout message when killed', () => {
+    _deps.execFile = vi.fn((_cmd, _args, _opts, cb) => {
+      const err = new Error('killed');
+      err.killed = true;
+      cb(err);
+    });
 
     const monitor = new MountHealthMonitor(1000);
     const errors = [];
@@ -58,6 +61,7 @@ describe('MountHealthMonitor', () => {
     vi.advanceTimersByTime(1000);
 
     expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatch(/timed out/);
     monitor.stop();
   });
 
@@ -74,7 +78,7 @@ describe('MountHealthMonitor', () => {
   });
 
   it('stops monitoring after stop() is called', () => {
-    _deps.accessSync.mockImplementation(() => { throw new Error('fail'); });
+    _deps.execFile = vi.fn((_cmd, _args, _opts, cb) => cb(new Error('fail')));
 
     const monitor = new MountHealthMonitor(1000);
     const errors = [];

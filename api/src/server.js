@@ -285,6 +285,12 @@ app.get('/api/admin/health', requireRole('admin'), async (req, res) => {
   res.json({ ok: allOk, timestamp: new Date().toISOString(), ...checks });
 });
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`[Mayday Cloud API] listening on :${PORT}`);
 });
+
+// Prevent stale keep-alive connections from accumulating.
+// Cloudflare's proxy timeout is ~100s; set ours slightly above to avoid
+// race conditions where the server closes first and the proxy retries.
+server.keepAliveTimeout = 65000;
+server.headersTimeout = 66000;

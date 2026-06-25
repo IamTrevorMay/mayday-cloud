@@ -1,12 +1,12 @@
-const fs = require('fs');
+const { execFile } = require('child_process');
 const EventEmitter = require('events');
 
 const DEFAULT_INTERVAL = 30000; // 30 seconds
+const CHECK_TIMEOUT = 10000;    // 10 seconds — if ls doesn't return, mount is hung
 
 // Internal deps — overridable for testing
 const _deps = {
-  accessSync: fs.accessSync,
-  readdirSync: fs.readdirSync,
+  execFile,
 };
 
 class MountHealthMonitor extends EventEmitter {
@@ -16,6 +16,7 @@ class MountHealthMonitor extends EventEmitter {
     this._timer = null;
     this._mountPoint = null;
     this._running = false;
+    this._checkInFlight = false;
   }
 
   get running() { return this._running; }
@@ -41,20 +42,31 @@ class MountHealthMonitor extends EventEmitter {
     }
     this._running = false;
     this._mountPoint = null;
+    this._checkInFlight = false;
   }
 
   /**
-   * Run a single health check.
+   * Run a single health check in a subprocess so a hung mount
+   * cannot block the Electron main process event loop.
    */
   _check() {
-    if (!this._mountPoint) return;
+    if (!this._mountPoint || this._checkInFlight) return;
 
-    try {
-      _deps.accessSync(this._mountPoint);
-      _deps.readdirSync(this._mountPoint);
-    } catch (err) {
-      this.emit('healthCheckFailed', err.message || 'Mount point inaccessible');
-    }
+    this._checkInFlight = true;
+
+    // Run `ls` in a child process with a hard timeout.
+    // If the mount is hung, the subprocess blocks (not us) and gets killed.
+    _deps.execFile('ls', [this._mountPoint], { timeout: CHECK_TIMEOUT }, (err) => {
+      this._checkInFlight = false;
+      if (!this._running) return;
+
+      if (err) {
+        const msg = err.killed
+          ? 'Mount health check timed out — mount may be hung'
+          : (err.message || 'Mount point inaccessible');
+        this.emit('healthCheckFailed', msg);
+      }
+    });
   }
 }
 

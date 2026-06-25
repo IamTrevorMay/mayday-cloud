@@ -132,6 +132,12 @@ class MountManager extends EventEmitter {
       '--vfs-write-back=5s',
       '--transfers=4',
       '--no-checksum',
+      // Connection resilience — fail fast and retry instead of hanging
+      '--timeout=30s',
+      '--contimeout=15s',
+      '--low-level-retries=10',
+      '--retries=3',
+      '--retries-sleep=1s',
       `--addr=localhost:${NFS_PORT}`,
       '--log-level=NOTICE',
     ];
@@ -216,7 +222,7 @@ class MountManager extends EventEmitter {
     // Mount via mount_nfs
     try {
       _deps.execSync(
-        `mount_nfs -o "vers=3,tcp,nolocks,locallocks,port=${NFS_PORT},mountport=${NFS_PORT}" localhost:/ "${mountPoint}"`,
+        `mount_nfs -o "vers=3,tcp,nolocks,locallocks,soft,intr,timeo=30,retrans=3,port=${NFS_PORT},mountport=${NFS_PORT}" localhost:/ "${mountPoint}"`,
         { timeout: 10000 }
       );
     } catch (err) {
@@ -266,6 +272,12 @@ class MountManager extends EventEmitter {
       '--transfers=4',
       '--no-checksum',
       '--no-check-certificate=false',
+      // Connection resilience — fail fast and retry instead of hanging
+      '--timeout=30s',
+      '--contimeout=15s',
+      '--low-level-retries=10',
+      '--retries=3',
+      '--retries-sleep=1s',
       '--log-level=NOTICE',
     ];
 
