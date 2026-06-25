@@ -13,7 +13,8 @@ const _deps = {
  */
 function checkFuse() {
   if (process.platform === 'darwin') {
-    return checkMacFuse();
+    // macOS uses native NFS (mount_nfs) — FUSE is not required
+    return { installed: true, name: 'NFS (native)', installUrl: null };
   } else if (process.platform === 'win32') {
     return checkWinFsp();
   }
