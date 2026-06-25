@@ -47,6 +47,7 @@ class CacheWarmer extends EventEmitter {
     } catch (err) {
       this._running = false;
       this.emit('error', err);
+      throw err;
     }
   }
 

@@ -643,6 +643,7 @@ app.on('window-all-closed', (e) => {
 });
 
 app.on('before-quit', async () => {
+  if (cacheWarmer) cacheWarmer.stop();
   healthMonitor.stop();
   await mountManager.stop();
   await stopSync();

@@ -259,10 +259,12 @@ function formatBytes(bytes) {
 function resetCacheWarmUI() {
   cacheWarmActive = false;
   $('#cache-warm-progress').style.display = 'none';
-  $('#cache-warm-row').style.display = '';
   $('#cache-warm-bar').style.width = '0%';
   $('#cache-warm-text').textContent = 'Warming...';
   $('#cache-warm-cancel').style.display = '';
+  // Let updateMountUI decide whether to show the button row
+  // based on actual mount state (avoids flash when unmounting)
+  refreshMount();
 }
 
 $('#cache-warm-btn').addEventListener('click', async () => {
