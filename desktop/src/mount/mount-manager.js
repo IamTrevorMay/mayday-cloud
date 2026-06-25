@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const EventEmitter = require('events');
 const { findRclone, obscurePassword } = require('./rclone');
+const { resolveCacheSize } = require('./cache-size');
 const config = require('../sync/config');
 
 const DEFAULT_MOUNT_POINT = process.platform === 'darwin'
@@ -23,6 +24,7 @@ const _deps = {
   readdirSync: fs.readdirSync,
   findRclone,
   obscurePassword,
+  resolveCacheSize,
   configLoad: config.load.bind(config),
 };
 
@@ -48,7 +50,7 @@ class MountManager extends EventEmitter {
    * @param {string} opts.apiUrl - WebDAV base URL (e.g. https://cloud-api.maydaystudio.net/api/webdav)
    * @param {string} opts.apiKey - mck_* API key
    * @param {string} opts.mountPoint - Local mount path
-   * @param {string} [opts.cacheSize='50G'] - VFS cache max size
+   * @param {string} [opts.cacheSize='auto'] - VFS cache max size ('auto' = size from free disk)
    * @param {string} [opts.remotePath='/'] - Remote subpath to mount
    */
   async start(opts) {
@@ -68,9 +70,15 @@ class MountManager extends EventEmitter {
       apiUrl,
       apiKey,
       mountPoint = DEFAULT_MOUNT_POINT,
-      cacheSize = '50G',
+      cacheSize = 'auto',
       remotePath = '/',
     } = opts;
+
+    // Resolve dynamic cache sizing ('auto' → fraction of free disk).
+    const resolvedCacheSize = _deps.resolveCacheSize(cacheSize);
+    if (resolvedCacheSize !== cacheSize) {
+      this.emit('log', `Cache size auto-sized to ${resolvedCacheSize} (from free disk)`);
+    }
 
     // Ensure mount point directory exists (macOS/Linux)
     if (process.platform !== 'win32') {
@@ -95,9 +103,9 @@ class MountManager extends EventEmitter {
     const webdavUrl = apiUrl.replace(/\/$/, '');
 
     if (process.platform === 'darwin') {
-      await this._startNfs(rclonePath, { webdavUrl, obscuredKey, mountPoint, cacheSize, remotePath });
+      await this._startNfs(rclonePath, { webdavUrl, obscuredKey, mountPoint, cacheSize: resolvedCacheSize, remotePath });
     } else {
-      await this._startFuse(rclonePath, { webdavUrl, obscuredKey, mountPoint, cacheSize, remotePath, opts });
+      await this._startFuse(rclonePath, { webdavUrl, obscuredKey, mountPoint, cacheSize: resolvedCacheSize, remotePath, opts });
     }
   }
 
@@ -119,8 +127,8 @@ class MountManager extends EventEmitter {
       '--vfs-read-chunk-size=128M',
       '--vfs-read-ahead=512M',
       '--buffer-size=256M',
-      '--vfs-cache-max-age=72h',
-      '--dir-cache-time=30s',
+      '--vfs-cache-max-age=168h',
+      '--dir-cache-time=1h',
       '--vfs-write-back=5s',
       '--transfers=4',
       '--no-checksum',
@@ -252,8 +260,8 @@ class MountManager extends EventEmitter {
       '--vfs-read-chunk-size=128M',
       '--vfs-read-ahead=512M',
       '--buffer-size=256M',
-      '--vfs-cache-max-age=72h',
-      '--dir-cache-time=30s',
+      '--vfs-cache-max-age=168h',
+      '--dir-cache-time=1h',
       '--vfs-write-back=5s',
       '--transfers=4',
       '--no-checksum',
@@ -423,7 +431,7 @@ class MountManager extends EventEmitter {
               apiUrl: webdavUrl,
               apiKey: cfg.apiKey,
               mountPoint: cfg.mountPoint || opts.mountPoint,
-              cacheSize: cfg.mountCacheSize || opts.cacheSize || '50G',
+              cacheSize: cfg.mountCacheSize || opts.cacheSize || 'auto',
               remotePath: cfg.mountRemotePath || opts.remotePath || '/',
             };
           }

@@ -46,7 +46,7 @@ describe('config.load', () => {
     // Defaults should be merged in
     expect(loaded.syncMode).toBe('upload-only');
     expect(loaded.mountEnabled).toBe(false);
-    expect(loaded.mountCacheSize).toBe('50G');
+    expect(loaded.mountCacheSize).toBe('auto');
   });
 });
 

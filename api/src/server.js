@@ -9,6 +9,7 @@ const { FileStore } = require('@tus/file-store');
 const webdav = require('webdav-server').v2;
 const { authMiddleware, verifyToken, requireRole, resolveRole } = require('./middleware/auth');
 const { createWebDAVServer } = require('./webdav/server');
+const { webdavRangeSize } = require('./webdav/range-size');
 const nasRouter = require('./routes/nas');
 const sharesRouter = require('./routes/shares');
 const keysRouter = require('./routes/keys');
@@ -49,7 +50,12 @@ app.use(cors({
     'Location',
   ],
 }));
-app.use(express.json());
+// Skip JSON body parsing for binary-stream routes (WebDAV reads/writes, TUS uploads).
+const jsonParser = express.json();
+app.use((req, res, next) => {
+  if (req.path.startsWith('/api/webdav') || req.path.startsWith('/api/nas/tus')) return next();
+  return jsonParser(req, res, next);
+});
 
 // ─── Rate limiting ───
 const globalLimiter = rateLimit({
@@ -184,6 +190,8 @@ webdavServer.afterRequest((ctx, next) => {
   }
   next();
 });
+// Report real file size in range responses (webdav-server emits `.../*`).
+app.use('/api/webdav', webdavRangeSize(ASSETS_ROOT));
 app.use(webdav.extensions.express('/api/webdav', webdavServer));
 
 // Protected routes — require valid Supabase JWT or API key

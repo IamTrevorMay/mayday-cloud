@@ -21,7 +21,7 @@ const DEFAULTS = {
   // Virtual drive mount settings
   mountEnabled: false,
   mountPoint: DEFAULT_MOUNT_POINT,
-  mountCacheSize: '50G',
+  mountCacheSize: 'auto',
   mountAutoStart: false,
   mountRemotePath: '/',
 };

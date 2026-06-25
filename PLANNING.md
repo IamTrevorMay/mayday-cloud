@@ -16,10 +16,55 @@ All stabilization phases (1–7) are complete. The platform is stable with:
 - TUS uploads excluded from global rate limiter
 - Password reset flow (self-service + admin-triggered)
 
+### NAS Playback Performance Tuning (2026-06-25)
+
+**Goal**: Make Premiere editing over the rclone mount feel responsive — kill
+the scrubbing/UI stalls and stop wasting the local disk cache.
+
+**Context**: Editing pulls media through a layered path —
+`Premiere → macOS NFS (loopback) → rclone VFS cache → WebDAV/HTTPS → Cloudflare
+→ Express API → NAS`. Benchmarking the live API isolated the real costs:
+- ~250ms per-request latency floor, shared by every endpoint → it's the
+  network+NAS-open hop (Cloudflare→origin ≈ 190ms), **not** mount flags or the
+  WebDAV library.
+- Throughput floats 20–36 MB/s — below the ~50+ MB/s 4K needs from a cold cache.
+- Cloudflare proxies but does **not** cache (no `cf-cache-status`) — pure hop tax.
+- Occasional multi-second stalls (one 16s read) — suspected NAS drive spin-up.
+
+**Changes shipped**:
+- Mount metadata caching: `--dir-cache-time` 30s → 1h (removes the repeated
+  ~250ms metadata round-trips behind the scrub stall); `--vfs-cache-max-age`
+  72h → 168h.
+- Dynamic VFS cache sizing (`desktop/src/mount/cache-size.js`): sizes from free
+  disk — `min(50% free, free − 150G)`, clamped 15G–300G. macOS uses `diskutil`
+  (purgeable-aware) since `df`/statfs under-report. Default `mountCacheSize`
+  is now `'auto'`; an explicit config value still wins.
+- WebDAV real-size header (`api/src/webdav/range-size.js`): range responses now
+  report the true file size instead of `bytes a-b/*`, eliminating rclone's
+  extra HEAD/PROPFIND size-probe round-trip per file.
+- API: `express.json()` skipped on binary-stream routes (`/api/webdav`,
+  `/api/nas/tus`).
+
+**Outcome**: Repeated metadata/read round-trips are removed and warm clips serve
+from a right-sized local cache. The raw pipe (throughput + 250ms floor) is a
+physical ceiling tuning cannot move — see follow-ups below.
+
 ## Planned
 
 ### Near-term
 - Document the coupling between auth middleware mount ordering and path check
+
+#### Playback performance follow-ups
+Mount tuning is maxed; remaining wins are editor- and infra-side:
+- **Premiere proxies** — edit low-res copies, relink full-res on export. The
+  real fix for 4K over a 20–36 MB/s pipe. Editor-side, no code change.
+- **Cache pre-warming** — preload a project's media so it's local before scrubbing.
+- **Cloudflare bypass for editors** — a DNS-only (grey-cloud) subdomain drops the
+  ~190ms CF→origin leg. Trade-off: exposes origin IP, loses CF TLS/DDoS.
+- **Disable NAS drive sleep** — suspected cause of the multi-second cold-read
+  stalls (drive spin-up). Check Yotamaster power/standby settings.
+- **Confirm NAS-site uplink** — 20–36 MB/s may be the upload ceiling there; if so
+  it's the hard limit and only caching/proxies help.
 
 ### Long-term
 
@@ -73,6 +118,8 @@ Migrate the API server off the Mac Studio onto a headless Raspberry Pi. Only the
 | 2026-04-11 | Stabilization audit and phased roadmap | Addressed all critical/high/medium findings |
 | 2026-04-12 | CORS origin allow-list | Replaced wildcard CORS with env-configurable origins |
 | 2026-04-12 | Anon key for user auth | Service role reserved for admin ops only |
+| 2026-06-25 | Dynamic VFS cache sizing from free disk | `df` under-reports on macOS; `diskutil` gives purgeable-aware free space |
+| 2026-06-25 | WebDAV range responses report real size | Saves rclone an extra size-probe round-trip per file |
 
 ### Deployment
 - Web deploys manually via `npx vercel --prod` (no auto-deploy)
