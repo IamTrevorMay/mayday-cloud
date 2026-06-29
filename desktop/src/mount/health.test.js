@@ -77,6 +77,18 @@ describe('MountHealthMonitor', () => {
     monitor.stop();
   });
 
+  it('emits healthCheckPassed when mount is healthy', () => {
+    const monitor = new MountHealthMonitor(1000);
+    const passed = [];
+    monitor.on('healthCheckPassed', () => passed.push(true));
+
+    monitor.start('/mnt/test');
+    vi.advanceTimersByTime(1000);
+
+    expect(passed).toHaveLength(1);
+    monitor.stop();
+  });
+
   it('stops monitoring after stop() is called', () => {
     _deps.execFile = vi.fn((_cmd, _args, _opts, cb) => cb(new Error('fail')));
 

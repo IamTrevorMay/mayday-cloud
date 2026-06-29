@@ -70,6 +70,8 @@ class MountHealthMonitor extends EventEmitter {
           ? 'Mount health check timed out — mount may be hung'
           : (err.message || 'Mount point inaccessible');
         this.emit('healthCheckFailed', msg);
+      } else {
+        this.emit('healthCheckPassed');
       }
     });
   }

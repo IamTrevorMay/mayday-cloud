@@ -234,11 +234,33 @@ mountManager.on('fuseError', () => {
   }
 });
 
+let healthFailCount = 0;
+const HEALTH_FAIL_THRESHOLD = 3;
+
 healthMonitor.on('healthCheckFailed', (error) => {
   logger.error(`[mount] Health check failed: ${error}`);
   if (mb && mb.window && !mb.window.isDestroyed()) {
     mb.window.webContents.send('mount:healthCheckFailed', error);
   }
+
+  healthFailCount++;
+  if (healthFailCount >= HEALTH_FAIL_THRESHOLD) {
+    logger.error(`[mount] ${healthFailCount} consecutive health check failures — remounting`);
+    healthFailCount = 0;
+    healthMonitor.stop();
+    mountManager.stop().then(() => {
+      const cfg = config.load();
+      if (cfg && cfg.mountEnabled) {
+        autoStartMount(cfg);
+      }
+    }).catch((err) => {
+      logger.error(`[mount] Remount failed: ${err.message}`);
+    });
+  }
+});
+
+healthMonitor.on('healthCheckPassed', () => {
+  healthFailCount = 0;
 });
 
 // ─── IPC Handlers ───

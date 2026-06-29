@@ -78,6 +78,7 @@ class MountManager extends EventEmitter {
     }
 
     this._stopping = false;
+    this._lastOpts = opts;
     this._setState('starting');
 
     const {
@@ -119,7 +120,7 @@ class MountManager extends EventEmitter {
     if (process.platform === 'darwin') {
       await this._startNfs(rclonePath, { webdavUrl, obscuredKey, mountPoint, cacheSize: resolvedCacheSize, remotePath });
     } else {
-      await this._startFuse(rclonePath, { webdavUrl, obscuredKey, mountPoint, cacheSize: resolvedCacheSize, remotePath, opts });
+      await this._startFuse(rclonePath, { webdavUrl, obscuredKey, mountPoint, cacheSize: resolvedCacheSize, remotePath });
     }
   }
 
@@ -153,6 +154,10 @@ class MountManager extends EventEmitter {
       '--low-level-retries=10',
       '--retries=3',
       '--retries-sleep=1s',
+      // HTTP resilience through Cloudflare proxy
+      '--disable-http2',
+      '--expect-continue-timeout=20s',
+      '--use-server-modtime',
       `--addr=localhost:${NFS_PORT}`,
       '--log-level=NOTICE',
     ];
@@ -193,7 +198,7 @@ class MountManager extends EventEmitter {
       if (code !== 0) {
         this.emit('log', `rclone exited with code ${code}`);
         this._setState('error');
-        this._scheduleRestart({ apiUrl: webdavUrl, apiKey: '', mountPoint, cacheSize, remotePath });
+        this._scheduleRestart(this._lastOpts);
       } else {
         this._setState('stopped');
       }
@@ -276,7 +281,7 @@ class MountManager extends EventEmitter {
   /**
    * Non-macOS: Start rclone mount with FUSE (original approach).
    */
-  async _startFuse(rclonePath, { webdavUrl, obscuredKey, mountPoint, cacheSize, remotePath, opts }) {
+  async _startFuse(rclonePath, { webdavUrl, obscuredKey, mountPoint, cacheSize, remotePath }) {
     const args = [
       'mount',
       `:webdav:${remotePath}`,
@@ -303,6 +308,10 @@ class MountManager extends EventEmitter {
       '--low-level-retries=10',
       '--retries=3',
       '--retries-sleep=1s',
+      // HTTP resilience through Cloudflare proxy
+      '--disable-http2',
+      '--expect-continue-timeout=20s',
+      '--use-server-modtime',
       '--log-level=NOTICE',
     ];
 
@@ -342,7 +351,7 @@ class MountManager extends EventEmitter {
       if (code !== 0) {
         this.emit('log', `rclone exited with code ${code}`);
         this._setState('error');
-        if (opts) this._scheduleRestart(opts);
+        if (this._lastOpts) this._scheduleRestart(this._lastOpts);
       } else {
         this._setState('stopped');
       }
@@ -352,8 +361,8 @@ class MountManager extends EventEmitter {
       this._process = null;
       this.emit('log', `rclone spawn error: ${err.message}`);
       this._setState('error');
-      if (!this._stopping && opts) {
-        this._scheduleRestart(opts);
+      if (!this._stopping && this._lastOpts) {
+        this._scheduleRestart(this._lastOpts);
       }
     });
 
@@ -434,6 +443,7 @@ class MountManager extends EventEmitter {
 
     this._process = null;
     this._mountPoint = null;
+    this._lastOpts = null;
     this._setState('stopped');
     this._restartCount = 0;
   }

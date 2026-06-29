@@ -238,6 +238,59 @@ describe('MountManager', () => {
     vi.useRealTimers();
   });
 
+  it('preserves start opts and uses them on restart', async () => {
+    vi.useFakeTimers();
+    const proc = createFakeProcess();
+    _deps.spawn.mockReturnValue(proc);
+
+    const mm = new MountManager();
+    const startPromise = mm.start(defaultOpts);
+
+    proc.stderr.emit('data', Buffer.from('NFS Server running at 127.0.0.1:9049'));
+    vi.advanceTimersByTime(300);
+    await startPromise;
+
+    // Verify opts were stored
+    expect(mm._lastOpts).toEqual(defaultOpts);
+
+    // Simulate crash — config reload fails, so restart uses stored opts
+    proc.emit('close', 1);
+    _deps.configLoad.mockReturnValue(null);
+
+    const proc2 = createFakeProcess();
+    _deps.spawn.mockReturnValue(proc2);
+
+    // Advance past restart delay
+    vi.advanceTimersByTime(1100);
+
+    await vi.waitFor(() => {
+      expect(_deps.spawn).toHaveBeenCalledTimes(2);
+    });
+
+    // The second spawn should have used the obscured version of the original apiKey
+    const secondSpawnArgs = _deps.spawn.mock.calls[1][1];
+    expect(secondSpawnArgs.join(' ')).toContain('obscured_mck_test123');
+    vi.useRealTimers();
+  });
+
+  it('clears _lastOpts on stop', async () => {
+    const proc = createFakeProcess();
+    _deps.spawn.mockReturnValue(proc);
+
+    const mm = new MountManager();
+    const startPromise = mm.start(defaultOpts);
+    proc.stderr.emit('data', Buffer.from('NFS Server running at 127.0.0.1:9049'));
+    await startPromise;
+
+    expect(mm._lastOpts).toEqual(defaultOpts);
+
+    const stopPromise = mm.stop();
+    proc.emit('close', 0);
+    await stopPromise;
+
+    expect(mm._lastOpts).toBeNull();
+  });
+
   // FUSE-mode tests (non-macOS)
   describe('FUSE mode (non-macOS)', () => {
     beforeEach(() => {
