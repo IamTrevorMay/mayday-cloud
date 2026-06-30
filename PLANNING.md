@@ -133,3 +133,54 @@ Migrate the API server off the Mac Studio onto a headless Raspberry Pi. Only the
 ## Open Risks
 
 - Auth middleware drop-path check fragility could cause silent auth bypass if mount order changes
+
+---
+
+## NLE Streaming Roadmap (Shade.inc comparison) — 2026-06-30
+
+Goal: become a LucidLink-style streaming NAS so editors (**local and remote**) can scrub/cut large media off the mount without downloading. Architecture-only target — **excludes** the AI layer that defines Shade.inc. Extends the "Playback performance follow-ups" above into a concrete build sequence.
+
+### Shade.inc context
+Shade ("Intelligent Cloud NAS", ~$14M raised, ~$300K MRR as of 2026-04) has two pillars:
+1. **ShadeFS** — local mount streaming >50GB files into Premiere/DaVinci, no download; proxy media for instant scrubbing.
+2. **AI layer** — scene detection, timecoded transcription, face clustering, natural-language semantic search. **Shade's actual moat — explicitly out of scope here.**
+
+Finding from the codebase audit: Mayday's mount layer (`desktop/src/mount/`) is already LucidLink-shaped — `rclone serve nfs` over WebDAV, soft NFS mount, `--vfs-cache-mode=full`, 128M chunks, 512M read-ahead, dynamic cache sizing, health monitor, FUSE fallback, cache warmer. The rclone tuning is essentially maxed (see 2026-06-25 work above). This roadmap is **not** "build the mount" — it's "fix the three things that block real NLE editing."
+
+### The three real gaps
+1. **`vfs-cache-mode=full` downloads whole files** — first scrub into a 50GB R3D pulls the entire object. Opposite of fetch-only-touched-blocks. → Step 1 (proxies) + Step 4 (verify sparse chunk caching).
+2. **Cache warmer warms whole originals** (`desktop/src/mount/cache-warmer.js:84`) — futile on 60TB. → Step 3 (warm proxies + file-heads of active folder only).
+3. **Data path runs through the API** — ceiling = work machine upload bandwidth. Partially addressed by the shipped Cloudflare bypass (`fast.maydaystudio.net`, see follow-ups above). → Step 4 (dual LAN/remote mount profiles).
+
+Target audience is **mixed (local + remote)** → proxies mandatory (serve both tiers); 10GbE for LAN; uplink matters for remote.
+
+### Architecture target
+```
+                          ┌─ LAN editors ──→ 10GbE → mount → NAS direct (full-res OK)
+NAS (10GbE) ── proxies ───┤
+   originals              └─ Remote editors → internet → mount → PROXY stream (full-res on export)
+```
+
+### Build sequence
+1. **Proxy pipeline (keystone — do first).** chokidar watcher (reuse `client/src/` sync-engine pattern) → ffmpeg 1080p proxy (`-c:v h264 -b:v 8M -vf scale=1920:-2`, or `prores_proxy`). Reuse the ffmpeg toolchain already in `api/src/routes/nas.js` thumbnails. Store in `.proxies/` (add to `HIDDEN_DIRS`). Track state in a small `proxies` table / sidecar JSON; resumable queue, prioritize recent mtime. CPU encode, no GPU. **Note:** this is *server-side auto-generated* proxies — more ambitious than the editor-side "manual Premiere proxies" listed in the follow-ups above.
+2. **Proxy-aware streaming.** `GET /api/nas/stream?quality=proxy|full` in `nas.js` (206 range already works). Default `proxy`; `full` on export.
+3. **Fix the cache warmer.** Warm proxies + file-heads (~16MB, moov/index atoms) of the active project folder only.
+4. **Dual mount profiles.** LAN profile mounts NAS over 10GbE directly, bypassing API/Cloudflare (builds on shipped `mountApiUrl` config). Remote profile serves proxies by default. Verify rclone sparse-caches full-res during a LAN scrub.
+5. **NLE relink workflow.** Proxy↔full-res naming (same basename, parallel `.proxies/` tree) so Premiere/DaVinci auto-relink at export.
+
+### Hardware (mixed editors)
+| Need | Spec | Why |
+|------|------|-----|
+| LAN fabric | 10GbE NIC + 10GbE switch + 10GbE on editor Macs | Near-local speed on-site. ~$500–1500 |
+| NAS link | Native 10GbE NAS Ethernet, not USB-C relay | USB-C makes the host a single-host bottleneck for multi-editor |
+| Remote uplink | Symmetric fiber, 1Gbps+ up | Remote ceiling = host upload. Consumer cable (~30Mbps up = the observed 20–36 MB/s) = proxies-only |
+| Cache NVMe | 2TB fast NVMe on host | Active-project proxies + warmed heads. NOT 60TB |
+| GPU | none | CPU ffmpeg fine. Optional NVENC later to speed proxy encode |
+
+**Order of spend:** 10GbE LAN fabric → NAS off USB-C onto 10GbE → confirm/upgrade remote uplink. Proxies (software) make the remote tier usable before any uplink upgrade.
+
+### Out of scope (explicitly NOT building)
+AI/semantic search, transcription, face clustering, scene detection; GPU compute box, Python ML service, pgvector, `media_assets`/`transcript_segments` tables; new mount engine. Search stays filename-only.
+
+### Honest framing
+Produces a LucidLink/Suite-style streaming NAS for mixed teams — shippable, reusing ~80% of existing code. **Not** Shade: no plain-English search (Shade's moat). **Critical path:** Step 1 (proxies) unblocks everything and serves both tiers — start there regardless of hardware timeline.
