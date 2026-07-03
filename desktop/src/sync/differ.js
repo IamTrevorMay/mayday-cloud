@@ -98,8 +98,8 @@ function diffBidirectional(localFiles, remoteFiles, baseFiles) {
 
     if (localExists && remoteExists) {
       // Both exist — check changes against base
-      const localChanged = !baseExists || _changed(local, base);
-      const remoteChanged = !baseExists || _changed(remote, base);
+      const localChanged = !baseExists || _localChanged(local, base);
+      const remoteChanged = !baseExists || _remoteChanged(remote, base);
 
       if (!localChanged && !remoteChanged) {
         // Skip — both unchanged
@@ -125,7 +125,7 @@ function diffBidirectional(localFiles, remoteFiles, baseFiles) {
         _collectDirs(relPath, remoteDirsNeeded);
       } else {
         // Was in base, now gone from remote → remote deleted it
-        const localChanged = _changed(local, base);
+        const localChanged = _localChanged(local, base);
         if (localChanged) {
           // Local also changed — keep local, re-upload
           toUpload.push(local);
@@ -142,7 +142,7 @@ function diffBidirectional(localFiles, remoteFiles, baseFiles) {
         _collectDirs(relPath, localDirsNeeded);
       } else {
         // Was in base, now gone locally → local deleted it
-        const remoteChanged = _changed(remote, base);
+        const remoteChanged = _remoteChanged(remote, base);
         if (remoteChanged) {
           // Remote also changed — keep remote, re-download
           toDownload.push(remote);
@@ -168,10 +168,21 @@ function diffBidirectional(localFiles, remoteFiles, baseFiles) {
   };
 }
 
-function _changed(current, base) {
-  // Size-only comparison: mtime is unreliable because local and remote
-  // filesystems assign different timestamps for the same content.
-  return current.size !== base.size;
+function _localChanged(local, base) {
+  // base_mtime_ms is recorded from the local file's mtime at sync time (a
+  // download utimes the local file to the remote mtime, an upload records the
+  // local mtime), so the local mtime IS comparable to base here. This catches
+  // in-place edits that preserve byte length, which size-only silently missed.
+  if (local.size !== base.size) return true;
+  return Math.abs((local.mtimeMs || 0) - (base.mtimeMs || 0)) > MTIME_TOLERANCE_MS;
+}
+
+function _remoteChanged(remote, base) {
+  // Size-only on purpose: the remote filesystem stamps its own mtime on write
+  // (upload time), which differs from the base snapshot's local-derived mtime,
+  // so an mtime compare here would spuriously flag every uploaded file as
+  // changed and trigger an endless re-download loop.
+  return remote.size !== base.size;
 }
 
 function _resolveConflict(relPath, local, remote, toUpload, toDownload, remoteDirs, localDirs) {
