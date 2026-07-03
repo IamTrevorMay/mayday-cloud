@@ -642,11 +642,27 @@ app.on('window-all-closed', (e) => {
   e.preventDefault?.();
 });
 
-app.on('before-quit', async () => {
-  if (cacheWarmer) cacheWarmer.stop();
-  healthMonitor.stop();
-  await mountManager.stop();
-  await stopSync();
+let _quitting = false;
+app.on('before-quit', (e) => {
+  // Electron does not await async before-quit handlers, so anything past the
+  // first await (rclone SIGKILL fallback, final DB flush in stopSync) would be
+  // skipped — leaving an orphaned mount and losing un-flushed state. Defer the
+  // quit, run cleanup to completion, then exit.
+  if (_quitting) return;
+  _quitting = true;
+  e.preventDefault();
+  (async () => {
+    try {
+      if (cacheWarmer) cacheWarmer.stop();
+      healthMonitor.stop();
+      await mountManager.stop();
+      await stopSync();
+    } catch (err) {
+      logger.error(`Shutdown cleanup error: ${err.message}`);
+    } finally {
+      app.exit(0);
+    }
+  })();
 });
 
 app.on('second-instance', () => {
