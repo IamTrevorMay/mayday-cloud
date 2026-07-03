@@ -84,8 +84,14 @@ function uploadTus(config, localPath, remoteDirPath, callbacks = {}) {
     if (callbacks.onUploadCreated) callbacks.onUploadCreated(upload);
 
     upload.findPreviousUploads().then((prev) => {
-      if (prev.length > 0) upload.resumeUpload(prev[0]);
-      else upload.start();
+      // Only resume if the file is unchanged since the previous attempt. A
+      // different size means the file was replaced between runs; resuming from
+      // the stale byte offset would corrupt the remote file, so start fresh.
+      if (prev.length > 0 && prev[0].size === fileSize) {
+        upload.resumeUpload(prev[0]);
+      } else {
+        upload.start();
+      }
     });
   });
 }
