@@ -189,9 +189,11 @@ router.get('/:token/download', async (req, res) => {
           .map(e => ({ name: e.name }));
         return res.json({ type: 'directory', files });
       }
-      // Stream the requested file
-      const filePath = path.join(fullPath, requestedFile);
-      if (!filePath.startsWith(fullPath)) {
+      // Stream the requested file. basename strips any directory components
+      // so ?file=../sibling can't escape the shared directory.
+      const safeFile = path.basename(requestedFile);
+      const filePath = path.join(fullPath, safeFile);
+      if (!filePath.startsWith(fullPath + path.sep)) {
         return res.status(400).json({ error: 'Path traversal blocked' });
       }
       const fileStat = await fsp.stat(filePath);
@@ -200,8 +202,8 @@ router.get('/:token/download', async (req, res) => {
         return res.status(410).json({ error: 'Link usage limit reached' });
       }
 
-      const ext = path.extname(requestedFile).toLowerCase().slice(1);
-      res.setHeader('Content-Disposition', `attachment; filename="${requestedFile}"`);
+      const ext = path.extname(safeFile).toLowerCase().slice(1);
+      res.setHeader('Content-Disposition', `attachment; filename="${safeFile}"`);
       res.setHeader('Content-Type', getMimeType(ext));
       res.setHeader('Content-Length', fileStat.size);
       const stream = fs.createReadStream(filePath);
