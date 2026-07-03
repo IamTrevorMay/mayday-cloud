@@ -54,9 +54,14 @@ class MountHealthMonitor extends EventEmitter {
 
     this._checkInFlight = true;
 
-    // Run `ls` in a child process with a hard timeout.
-    // If the mount is hung, the subprocess blocks (not us) and gets killed.
-    _deps.execFile('ls', [this._mountPoint], { timeout: CHECK_TIMEOUT }, (err) => {
+    // List the mount in a child process with a hard timeout. If the mount is
+    // hung the subprocess blocks (not us) and gets killed. Use a platform-
+    // appropriate command — `ls` doesn't exist on Windows, where its ENOENT
+    // would otherwise fail the check every interval on a healthy drive.
+    const isWin = process.platform === 'win32';
+    const cmd = isWin ? 'cmd' : 'ls';
+    const args = isWin ? ['/c', 'dir', this._mountPoint] : [this._mountPoint];
+    _deps.execFile(cmd, args, { timeout: CHECK_TIMEOUT }, (err) => {
       this._checkInFlight = false;
       if (!this._running) return;
 
