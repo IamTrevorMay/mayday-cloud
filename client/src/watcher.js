@@ -11,6 +11,10 @@ function create(folder, callbacks) {
       pollInterval: 200,
     },
     ignored: (filePath, stats) => {
+      // Never ignore the watch root itself — chokidar tests it against this
+      // predicate, so a sync folder like ~/.mydata would otherwise be dropped
+      // and nothing would sync.
+      if (path.resolve(filePath) === path.resolve(folder)) return false;
       const base = path.basename(filePath);
       return base.startsWith('.');
     },
