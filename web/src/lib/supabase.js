@@ -10,7 +10,7 @@ const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:4000';
 /**
  * Return a valid session, refreshing the token if it's expired or near-expiry.
  */
-async function getFreshSession() {
+export async function getFreshSession() {
   const { data: { session } } = await supabase.auth.getSession();
   if (!session) return null;
 

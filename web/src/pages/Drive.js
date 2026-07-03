@@ -622,7 +622,7 @@ export default function Drive() {
     const fileList = Array.from(files);
     if (!fileList.length) return;
     const uploadPath = targetPath !== undefined ? targetPath : currentPath;
-    const { supabase } = await import('../lib/supabase');
+    const { supabase, getFreshSession } = await import('../lib/supabase');
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) return;
 
@@ -649,8 +649,13 @@ export default function Drive() {
             targetPath: uploadPath,
             filetype: file.type,
           },
-          headers: {
-            Authorization: `Bearer ${session.access_token}`,
+          onBeforeRequest(req) {
+            // Refresh the token before every request so a long upload (files
+            // up to 10GB) doesn't fail with 401 when the ~1h access token
+            // expires mid-transfer. A one-time static header could not resume.
+            return getFreshSession().then((s) => {
+              if (s) req.setHeader('Authorization', `Bearer ${s.access_token}`);
+            });
           },
           onProgress(bytesUploaded, bytesTotal) {
             const pct = Math.round((bytesUploaded / bytesTotal) * 100);
