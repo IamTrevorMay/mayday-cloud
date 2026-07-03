@@ -1,4 +1,4 @@
-const { spawn, execSync } = require('child_process');
+const { spawn, execSync, execFileSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const EventEmitter = require('events');
@@ -19,6 +19,7 @@ const MAX_RESTART_DELAY = 60000;
 const _deps = {
   spawn,
   execSync,
+  execFileSync,
   mkdirSync: fs.mkdirSync,
   accessSync: fs.accessSync,
   readdirSync: fs.readdirSync,
@@ -36,6 +37,7 @@ class MountManager extends EventEmitter {
     this._restartCount = 0;
     this._restartTimer = null;
     this._stopping = false;
+    this._starting = false;    // Synchronous guard against overlapping start()
     this._mountPoint = null;   // Track mount point for unmount
   }
 
@@ -54,10 +56,22 @@ class MountManager extends EventEmitter {
    * @param {string} [opts.remotePath='/'] - Remote subpath to mount
    */
   async start(opts) {
-    if (this._process) {
+    // _process isn't assigned until after the async spawn work below, so two
+    // overlapping start() calls (autostart racing a user action) would both
+    // pass a _process-only check and spawn two rclone processes, leaking one.
+    // A synchronous flag closes that window.
+    if (this._process || this._starting) {
       throw new Error('Mount already active');
     }
+    this._starting = true;
+    try {
+      await this._start(opts);
+    } finally {
+      this._starting = false;
+    }
+  }
 
+  async _start(opts) {
     const rclonePath = _deps.findRclone();
     if (!rclonePath) {
       throw new Error('rclone not found. Please install rclone first.');
@@ -119,7 +133,8 @@ class MountManager extends EventEmitter {
       `:webdav:${remotePath}`,
       `--webdav-url=${webdavUrl}`,
       '--webdav-user=apikey',
-      `--webdav-pass=${obscuredKey}`,
+      // Password supplied via RCLONE_WEBDAV_PASS env (see spawn) so the
+      // obscured key isn't exposed in `ps aux` argv to other local users.
       '--webdav-bearer-token=false',
       // VFS caching optimized for video editing
       '--vfs-cache-mode=full',
@@ -145,6 +160,7 @@ class MountManager extends EventEmitter {
     this._process = _deps.spawn(rclonePath, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
+      env: { ...process.env, RCLONE_WEBDAV_PASS: obscuredKey },
     });
 
     let nfsReady = false;
@@ -221,8 +237,16 @@ class MountManager extends EventEmitter {
 
     // Mount via mount_nfs
     try {
-      _deps.execSync(
-        `mount_nfs -o "vers=3,tcp,nolocks,locallocks,soft,intr,timeo=30,retrans=3,port=${NFS_PORT},mountport=${NFS_PORT}" localhost:/ "${mountPoint}"`,
+      // execFileSync (no shell) so a mountPoint containing shell metacharacters
+      // can't break or inject into the command.
+      _deps.execFileSync(
+        'mount_nfs',
+        [
+          '-o',
+          `vers=3,tcp,nolocks,locallocks,soft,intr,timeo=30,retrans=3,port=${NFS_PORT},mountport=${NFS_PORT}`,
+          'localhost:/',
+          mountPoint,
+        ],
         { timeout: 10000 }
       );
     } catch (err) {
@@ -259,7 +283,8 @@ class MountManager extends EventEmitter {
       mountPoint,
       `--webdav-url=${webdavUrl}`,
       '--webdav-user=apikey',
-      `--webdav-pass=${obscuredKey}`,
+      // Password supplied via RCLONE_WEBDAV_PASS env (see spawn) so the
+      // obscured key isn't exposed in `ps aux` argv to other local users.
       '--webdav-bearer-token=false',
       '--vfs-cache-mode=full',
       `--vfs-cache-max-size=${cacheSize}`,
@@ -284,6 +309,7 @@ class MountManager extends EventEmitter {
     this._process = _deps.spawn(rclonePath, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
+      env: { ...process.env, RCLONE_WEBDAV_PASS: obscuredKey },
     });
 
     this._process.stdout.on('data', (data) => {
@@ -415,7 +441,9 @@ class MountManager extends EventEmitter {
   _unmountNfs(mountPoint) {
     if (!mountPoint) return;
     try {
-      _deps.execSync(`umount "${mountPoint}" 2>/dev/null || true`, { timeout: 5000 });
+      // execFileSync (no shell); the surrounding try/catch replaces the old
+      // "2>/dev/null || true" so a not-mounted error is still ignored.
+      _deps.execFileSync('umount', [mountPoint], { timeout: 5000, stdio: 'ignore' });
     } catch { /* ignore */ }
   }
 

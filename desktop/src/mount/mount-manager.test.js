@@ -30,6 +30,7 @@ beforeEach(() => {
   Object.defineProperty(process, 'platform', { value: 'darwin' });
   _deps.spawn = vi.fn();
   _deps.execSync = vi.fn();
+  _deps.execFileSync = vi.fn();
   _deps.mkdirSync = vi.fn();
   _deps.accessSync = vi.fn();
   _deps.readdirSync = vi.fn(() => ['folder1', 'folder2']);
@@ -77,9 +78,10 @@ describe('MountManager', () => {
     expect(states).toContain('mounted');
     expect(mm.mounted).toBe(true);
 
-    // Should have called mount_nfs via execSync
-    expect(_deps.execSync).toHaveBeenCalledWith(
-      expect.stringContaining('mount_nfs'),
+    // Should have called mount_nfs via execFileSync (no shell)
+    expect(_deps.execFileSync).toHaveBeenCalledWith(
+      'mount_nfs',
+      expect.arrayContaining(['localhost:/', defaultOpts.mountPoint]),
       expect.any(Object)
     );
   });
@@ -101,7 +103,9 @@ describe('MountManager', () => {
   it('sets error when mount_nfs fails', async () => {
     const proc = createFakeProcess();
     _deps.spawn.mockReturnValue(proc);
-    _deps.execSync.mockImplementation(() => { throw new Error('mount_nfs failed'); });
+    _deps.execFileSync.mockImplementation((cmd) => {
+      if (cmd === 'mount_nfs') throw new Error('mount_nfs failed');
+    });
 
     const mm = new MountManager();
     const startPromise = mm.start(defaultOpts);
@@ -141,9 +145,10 @@ describe('MountManager', () => {
     await stopPromise;
 
     expect(mm.state).toBe('stopped');
-    // Should have called umount
-    expect(_deps.execSync).toHaveBeenCalledWith(
-      expect.stringContaining('umount'),
+    // Should have called umount via execFileSync (no shell)
+    expect(_deps.execFileSync).toHaveBeenCalledWith(
+      'umount',
+      [defaultOpts.mountPoint],
       expect.any(Object)
     );
     expect(proc.kill).toHaveBeenCalledWith('SIGTERM');
