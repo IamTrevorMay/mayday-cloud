@@ -43,14 +43,22 @@ async function getRestrictions() {
   return result;
 }
 
+// Case-insensitive comparison on the macOS filesystem so `Private` and
+// `private` are treated as the same folder for restriction purposes.
+const restrictionCmp = (s) => (process.platform === 'darwin' ? s.toLowerCase() : s);
+
 function isPathRestricted(itemPath, role, userId, restrictions) {
   if (!role || role === 'admin') return false;
-  const normalized = (itemPath || '').replace(/^\/+|\/+$/g, '');
+  // Canonicalize the path the same way the file is actually resolved, so that
+  // `./Private/x`, `Private/x`, and `/Private/x` all reduce to one comparable
+  // form. A bare slash-strip left `./Private/x` unmatched against `Private/`.
+  const abs = path.resolve(ASSETS_ROOT, (itemPath || '').replace(/^\/+/, ''));
+  const normalized = restrictionCmp(path.relative(ASSETS_ROOT, abs).replace(/\\/g, '/'));
 
   // Check role-level restrictions
   for (const r of restrictions.roleRows) {
     if (r.blocked_role !== role) continue;
-    const rNorm = (r.folder_path || '').replace(/^\/+|\/+$/g, '');
+    const rNorm = restrictionCmp((r.folder_path || '').replace(/^\/+|\/+$/g, ''));
     if (normalized === rNorm || normalized.startsWith(rNorm + '/')) return true;
   }
 
@@ -58,7 +66,7 @@ function isPathRestricted(itemPath, role, userId, restrictions) {
   if (userId) {
     for (const r of restrictions.userRows) {
       if (r.user_id !== userId) continue;
-      const rNorm = (r.folder_path || '').replace(/^\/+|\/+$/g, '');
+      const rNorm = restrictionCmp((r.folder_path || '').replace(/^\/+|\/+$/g, ''));
       if (normalized === rNorm || normalized.startsWith(rNorm + '/')) return true;
     }
   }
