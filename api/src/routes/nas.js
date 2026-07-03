@@ -79,6 +79,25 @@ function sanitizePath(requestedPath, assetsRoot) {
   return resolved;
 }
 
+// Enforce an API key's scoped_path: a scoped key may only touch paths within
+// ASSETS_ROOT/<scoped_path>. Returns the resolved path or throws.
+function enforceScope(req, resolved) {
+  const scoped = req.user && req.user.scopedPath;
+  if (scoped) {
+    const scopeRoot = path.resolve(ASSETS_ROOT, String(scoped).replace(/^\/+/, ''));
+    if (resolved !== scopeRoot && !resolved.startsWith(scopeRoot + path.sep)) {
+      throw new Error('Path outside key scope');
+    }
+  }
+  return resolved;
+}
+
+// Resolve a user-supplied path within ASSETS_ROOT and apply API-key scoping.
+// All file-operation routes should use this instead of sanitizePath directly.
+function resolvePath(req, requestedPath) {
+  return enforceScope(req, sanitizePath(requestedPath, ASSETS_ROOT));
+}
+
 // GET /api/nas/health
 router.get('/health', async (req, res) => {
   try {
@@ -93,7 +112,7 @@ router.get('/health', async (req, res) => {
 router.get('/list', async (req, res) => {
   try {
     const requestedPath = req.query.path || '';
-    const fullPath = sanitizePath(requestedPath, ASSETS_ROOT);
+    const fullPath = resolvePath(req, requestedPath);
     const sort = req.query.sort || 'name';
     const order = req.query.order || 'asc';
 
@@ -149,7 +168,7 @@ router.get('/stat', async (req, res) => {
     if (isPathRestricted(requestedPath, req.user?.profileRole, req.user?.id, restrictions)) {
       return res.status(403).json({ error: 'Access restricted' });
     }
-    const fullPath = sanitizePath(requestedPath, ASSETS_ROOT);
+    const fullPath = resolvePath(req, requestedPath);
     const stat = await fsp.stat(fullPath);
     res.json({
       name: path.basename(fullPath),
@@ -173,7 +192,7 @@ router.get('/download', async (req, res) => {
     if (isPathRestricted(requestedPath, req.user?.profileRole, req.user?.id, restrictions)) {
       return res.status(403).json({ error: 'Access restricted' });
     }
-    const fullPath = sanitizePath(requestedPath, ASSETS_ROOT);
+    const fullPath = resolvePath(req, requestedPath);
     const fileName = path.basename(fullPath);
 
     const stat = await fsp.stat(fullPath);
@@ -204,7 +223,7 @@ router.get('/stream', async (req, res) => {
     if (isPathRestricted(requestedPath, req.user?.profileRole, req.user?.id, restrictions)) {
       return res.status(403).json({ error: 'Access restricted' });
     }
-    const fullPath = sanitizePath(requestedPath, ASSETS_ROOT);
+    const fullPath = resolvePath(req, requestedPath);
     const fileName = path.basename(fullPath);
 
     const stat = await fsp.stat(fullPath);
@@ -263,7 +282,7 @@ router.get('/thumb', async (req, res) => {
     if (isPathRestricted(requestedPath, req.user?.profileRole, req.user?.id, restrictions)) {
       return res.status(403).json({ error: 'Access restricted' });
     }
-    const fullPath = sanitizePath(requestedPath, ASSETS_ROOT);
+    const fullPath = resolvePath(req, requestedPath);
 
     const ext = path.extname(fullPath).toLowerCase().slice(1);
     const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'];
@@ -341,17 +360,18 @@ router.post('/upload', writeGuard, upload.single('file'), async (req, res) => {
     const targetPath = req.body.path || '';
     if (!req.file) return res.status(400).json({ error: 'No file provided' });
 
-    const destDir = sanitizePath(targetPath, ASSETS_ROOT);
-    const destPath = path.join(destDir, req.file.originalname);
+    const destDir = resolvePath(req, targetPath);
+    const safeName = path.basename(req.file.originalname);
+    const destPath = path.join(destDir, safeName);
 
-    if (!destPath.startsWith(ASSETS_ROOT)) {
+    if (!destPath.startsWith(destDir + path.sep)) {
       return res.status(400).json({ error: 'Path traversal blocked' });
     }
 
     await fsp.mkdir(destDir, { recursive: true });
     await fsp.writeFile(destPath, req.file.buffer);
 
-    res.json({ success: true, path: path.join(targetPath, req.file.originalname) });
+    res.json({ success: true, path: path.join(targetPath, safeName) });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -362,7 +382,7 @@ router.post('/mkdir', writeGuard, async (req, res) => {
   try {
     const { path: dirPath } = req.body;
     if (!dirPath) return res.status(400).json({ error: 'path required' });
-    const fullPath = sanitizePath(dirPath, ASSETS_ROOT);
+    const fullPath = resolvePath(req, dirPath);
     await fsp.mkdir(fullPath, { recursive: true });
     res.json({ success: true, path: dirPath });
   } catch (err) {
@@ -375,9 +395,10 @@ router.post('/rename', writeGuard, async (req, res) => {
   try {
     const { path: oldPath, newName } = req.body;
     if (!oldPath || !newName) return res.status(400).json({ error: 'path and newName required' });
-    const fullOld = sanitizePath(oldPath, ASSETS_ROOT);
-    const fullNew = path.join(path.dirname(fullOld), newName);
-    if (!fullNew.startsWith(ASSETS_ROOT)) return res.status(400).json({ error: 'Path traversal blocked' });
+    const fullOld = resolvePath(req, oldPath);
+    // basename prevents newName from containing path separators / traversal.
+    const fullNew = path.join(path.dirname(fullOld), path.basename(newName));
+    enforceScope(req, fullNew);
     await fsp.rename(fullOld, fullNew);
     res.json({ success: true, path: path.relative(ASSETS_ROOT, fullNew) });
   } catch (err) {
@@ -390,8 +411,8 @@ router.post('/move', writeGuard, async (req, res) => {
   try {
     const { path: itemPath, destination } = req.body;
     if (!itemPath || destination === undefined) return res.status(400).json({ error: 'path and destination required' });
-    const fullSrc = sanitizePath(itemPath, ASSETS_ROOT);
-    const fullDest = sanitizePath(destination, ASSETS_ROOT);
+    const fullSrc = resolvePath(req, itemPath);
+    const fullDest = resolvePath(req, destination);
 
     // Confirm destination is a directory
     const destStat = await fsp.stat(fullDest);
@@ -415,7 +436,7 @@ router.delete('/delete', writeGuard, async (req, res) => {
   try {
     const { path: filePath } = req.body;
     if (!filePath) return res.status(400).json({ error: 'path required' });
-    const fullPath = sanitizePath(filePath, ASSETS_ROOT);
+    const fullPath = resolvePath(req, filePath);
 
     // Move to .trash instead of permanent delete
     const trashDir = path.join(ASSETS_ROOT, '.trash');
@@ -435,7 +456,7 @@ router.get('/search', async (req, res) => {
     const query = req.query.q;
     if (!query) return res.status(400).json({ error: 'q required' });
     const dataset = req.query.dataset || '';
-    const searchRoot = sanitizePath(dataset, ASSETS_ROOT);
+    const searchRoot = resolvePath(req, dataset);
     const lowerQuery = query.toLowerCase();
 
     async function walk(dir, depth = 0) {
