@@ -246,11 +246,26 @@ router.get('/stream', async (req, res) => {
 
     const range = req.headers.range;
     if (range) {
-      const match = range.match(/bytes=(\d+)-(\d*)/);
-      if (!match) return res.status(416).json({ error: 'Invalid range' });
+      // Support "start-end", "start-", and the suffix form "-N" (last N bytes).
+      const match = range.match(/^bytes=(\d*)-(\d*)$/);
+      if (!match || (match[1] === '' && match[2] === '')) {
+        res.setHeader('Content-Range', `bytes */${stat.size}`);
+        return res.status(416).json({ error: 'Invalid range' });
+      }
 
-      const start = parseInt(match[1], 10);
-      const end = match[2] ? parseInt(match[2], 10) : stat.size - 1;
+      let start, end;
+      if (match[1] === '') {
+        const suffix = parseInt(match[2], 10);
+        if (!suffix) {
+          res.setHeader('Content-Range', `bytes */${stat.size}`);
+          return res.status(416).json({ error: 'Range not satisfiable' });
+        }
+        start = Math.max(0, stat.size - suffix);
+        end = stat.size - 1;
+      } else {
+        start = parseInt(match[1], 10);
+        end = match[2] ? parseInt(match[2], 10) : stat.size - 1;
+      }
 
       if (start >= stat.size || end >= stat.size || start > end) {
         res.setHeader('Content-Range', `bytes */${stat.size}`);
