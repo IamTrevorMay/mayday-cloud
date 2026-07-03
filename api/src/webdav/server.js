@@ -2,6 +2,7 @@ const webdav = require('webdav-server').v2;
 const path = require('path');
 const { MaydayWebDAVAuth } = require('./auth');
 const { resolveRole } = require('../middleware/auth');
+const { isPathRestricted, getRestrictions } = require('../routes/nas');
 
 // Directories that should be hidden from WebDAV listings
 const HIDDEN_DIRS = new Set(['.trash', '.thumbs', '.tus-staging']);
@@ -89,31 +90,39 @@ function createWebDAVServer(assetsRoot) {
       }
     }
 
-    // Write methods require a writer role (admin or member). The JWT role
-    // claim is always 'authenticated', so resolve the real profile role.
-    if (WRITE_METHODS.has(method)) {
-      if (!mUser) {
-        ctx.setCode(401);
-        ctx.exit();
-        return;
-      }
-      resolveRole(mUser.id)
-        .then((role) => {
-          if (role !== 'admin' && role !== 'member') {
-            ctx.setCode(403);
-            ctx.exit();
-            return;
-          }
-          next();
-        })
-        .catch(() => {
-          ctx.setCode(500);
-          ctx.exit();
-        });
+    if (!mUser) {
+      // requireAuthentification is true, so this shouldn't happen; deny writes
+      // defensively and let reads fall through to webdav-server's own auth.
+      if (WRITE_METHODS.has(method)) { ctx.setCode(401); ctx.exit(); return; }
+      next();
       return;
     }
 
-    next();
+    // Resolve the real profile role (the JWT claim is always 'authenticated')
+    // and apply folder restrictions + the write-role gate. Both role and
+    // restrictions are cached, so this stays cheap for the mount's many reads.
+    resolveRole(mUser.id)
+      .then(async (role) => {
+        // Folder restrictions apply to reads and writes (isPathRestricted is a
+        // no-op for admins). Fail open only if the restriction fetch itself
+        // errors, so a Supabase blip doesn't break active editing.
+        try {
+          const restrictions = await getRestrictions();
+          const rel = pathStr.replace(/^\/+/, '');
+          if (isPathRestricted(rel, role, mUser.id, restrictions)) {
+            ctx.setCode(403); ctx.exit(); return;
+          }
+        } catch { /* restriction lookup failed — leave write gate below in place */ }
+
+        if (WRITE_METHODS.has(method) && role !== 'admin' && role !== 'member') {
+          ctx.setCode(403); ctx.exit(); return;
+        }
+        next();
+      })
+      .catch(() => {
+        ctx.setCode(500);
+        ctx.exit();
+      });
   });
 
   return server;

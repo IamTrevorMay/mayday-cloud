@@ -761,3 +761,6 @@ router.get('/storage', async (req, res) => {
 });
 
 module.exports = router;
+// Exposed for reuse by the WebDAV authorization layer.
+module.exports.isPathRestricted = isPathRestricted;
+module.exports.getRestrictions = getRestrictions;
