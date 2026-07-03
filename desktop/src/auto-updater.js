@@ -33,6 +33,23 @@ function onStatus(fn) {
   statusListener = fn;
 }
 
+let checkInFlight = false;
+
+// Single guarded entry point for update checks. electron-updater dislikes
+// overlapping checks (the periodic interval could fire while a retry is
+// mid-flight); the in-flight flag serializes them.
+function runCheck() {
+  if (checkInFlight) return Promise.resolve();
+  checkInFlight = true;
+  return autoUpdater.checkForUpdates()
+    .catch((err) => {
+      console.error('[auto-updater] check failed:', err?.message || err);
+      setState('error');
+      scheduleRetry();
+    })
+    .finally(() => { checkInFlight = false; });
+}
+
 function scheduleRetry() {
   if (retryCount >= MAX_RETRIES) {
     console.log(`[auto-updater] giving up after ${MAX_RETRIES} retries`);
@@ -42,11 +59,7 @@ function scheduleRetry() {
   console.log(`[auto-updater] retrying in ${RETRY_DELAY_MS / 1000}s (attempt ${retryCount}/${MAX_RETRIES})`);
   retryTimer = setTimeout(() => {
     retryTimer = null;
-    autoUpdater.checkForUpdates().catch((err) => {
-      console.error('[auto-updater] retry failed:', err?.message || err);
-      setState('error');
-      scheduleRetry();
-    });
+    runCheck();
   }, RETRY_DELAY_MS);
 }
 
@@ -55,11 +68,7 @@ function checkNow() {
   retryCount = 0;
   if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
   setState('checking');
-  return autoUpdater.checkForUpdates().catch((err) => {
-    console.error('[auto-updater] check failed:', err?.message || err);
-    setState('error');
-    scheduleRetry();
-  });
+  return runCheck();
 }
 
 function installNow() {
@@ -111,20 +120,12 @@ function init() {
   });
 
   setTimeout(() => {
-    autoUpdater.checkForUpdates().catch((err) => {
-      console.error('[auto-updater] initial check failed:', err?.message || err);
-      setState('error');
-      scheduleRetry();
-    });
+    runCheck();
   }, FIRST_CHECK_DELAY_MS);
 
   setInterval(() => {
     retryCount = 0; // reset retries for periodic checks
-    autoUpdater.checkForUpdates().catch((err) => {
-      console.error('[auto-updater] periodic check failed:', err?.message || err);
-      setState('error');
-      scheduleRetry();
-    });
+    runCheck();
   }, CHECK_INTERVAL_MS);
 }
 
