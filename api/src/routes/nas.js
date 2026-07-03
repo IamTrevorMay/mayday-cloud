@@ -317,10 +317,13 @@ router.get('/thumb', async (req, res) => {
 
     const stat = await fsp.stat(fullPath);
     const relativePath = path.relative(ASSETS_ROOT, fullPath);
+    // Include size so a replacement that preserves mtime (rsync --times,
+    // restore-from-backup) still busts the cache; use 32 hex chars (128 bits)
+    // for stronger collision resistance than the previous 16.
     const cacheKey = crypto.createHash('sha256')
-      .update(relativePath + ':' + stat.mtimeMs)
+      .update(relativePath + ':' + stat.mtimeMs + ':' + stat.size)
       .digest('hex')
-      .slice(0, 16);
+      .slice(0, 32);
 
     const thumbDir = path.join(ASSETS_ROOT, '.thumbs');
     await fsp.mkdir(thumbDir, { recursive: true });
