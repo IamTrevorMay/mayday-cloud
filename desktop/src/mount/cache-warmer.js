@@ -102,6 +102,14 @@ class CacheWarmer extends EventEmitter {
         this._emitProgress(file.relativePath);
         resolve();
       });
+
+      // stop() calls stream.destroy(), which emits 'close' but not 'end'/
+      // 'error'; without this the promise would never settle. resolve() is
+      // idempotent, so the normal end/error paths are unaffected.
+      rs.on('close', () => {
+        this._streams.delete(rs);
+        resolve();
+      });
     });
   }
 
