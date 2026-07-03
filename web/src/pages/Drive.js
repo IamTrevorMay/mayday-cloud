@@ -789,11 +789,14 @@ export default function Drive() {
   }
 
   async function handleDownload(filePath) {
-    const { supabase } = await import('../lib/supabase');
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return;
-    const url = `${API_URL}/api/nas/download?path=${encodeURIComponent(filePath)}&token=${session.access_token}`;
-    window.open(url, '_blank');
+    // authedUrl refreshes a near-expiry token; the old raw getSession() path
+    // could hand window.open a stale JWT after the tab sat idle, 401ing.
+    try {
+      const url = await authedUrl(`/api/nas/download?path=${encodeURIComponent(filePath)}`);
+      window.open(url, '_blank');
+    } catch {
+      // Not authenticated / refresh failed — nothing to open.
+    }
   }
 
   // Generate authenticated preview URL when a file is selected
