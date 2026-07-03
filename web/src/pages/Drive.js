@@ -46,6 +46,11 @@ function Thumbnail({ filePath, size = 80 }) {
 
   useEffect(() => {
     let cancelled = false;
+    // Reset so a Thumbnail instance reused across a different filePath (list
+    // reorder / folder change) doesn't keep the previous file's failed/url and
+    // render blank for a valid new file.
+    setUrl(null);
+    setFailed(false);
     authedUrl(`/api/nas/thumb?path=${encodeURIComponent(filePath)}`)
       .then(u => { if (!cancelled) setUrl(u); })
       .catch(() => { if (!cancelled) setFailed(true); });
@@ -1045,7 +1050,7 @@ export default function Drive() {
                   const isSelected = selectedItems.has(item.path);
                   return (
                     <div
-                      key={i}
+                      key={item.path}
                       onClick={() => {
                         if (hasSelection) { toggleSelect(item, i, {}); return; }
                         if (item.type === 'directory') navigateTo(item.path); else setSelectedFile(item);
@@ -1119,7 +1124,7 @@ export default function Drive() {
                   const isSelected = selectedItems.has(item.path);
                   return (
                     <div
-                      key={i}
+                      key={item.path}
                       onClick={() => {
                         if (hasSelection) { toggleSelect(item, i, {}); return; }
                         if (item.type === 'directory') navigateTo(item.path); else setSelectedFile(item);
