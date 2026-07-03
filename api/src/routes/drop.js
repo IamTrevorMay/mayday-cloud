@@ -98,10 +98,13 @@ router.post('/:token/upload', upload.single('file'), async (req, res) => {
       return res.status(403).json({ error: 'This link is download-only' });
     }
 
-    // Write file
+    // Write file. path.basename strips any directory components from the
+    // client-supplied filename so an upload can never escape the share's
+    // target directory (e.g. originalname "../../secret" -> "secret").
     const destDir = sanitizePath(link.target_path);
-    const destPath = path.join(destDir, req.file.originalname);
-    if (!destPath.startsWith(ASSETS_ROOT)) {
+    const safeName = path.basename(req.file.originalname);
+    const destPath = path.join(destDir, safeName);
+    if (!destPath.startsWith(destDir + path.sep)) {
       return res.status(400).json({ error: 'Path traversal blocked' });
     }
 
@@ -122,7 +125,7 @@ router.post('/:token/upload', upload.single('file'), async (req, res) => {
       return res.status(410).json({ error: 'Link usage limit reached' });
     }
 
-    res.json({ success: true, name: req.file.originalname });
+    res.json({ success: true, name: safeName });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
