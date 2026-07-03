@@ -230,7 +230,13 @@ app.use('/api', async (req, res, next) => {
   if (!req.user?.id) return next();
   try {
     req.user.profileRole = await resolveRole(req.user.id);
-  } catch { /* role will be resolved lazily if needed */ }
+  } catch {
+    // Fail closed: if the role can't be resolved (e.g. a Supabase blip),
+    // assume the most restricted role so folder restrictions still apply.
+    // isPathRestricted treats an undefined role as unrestricted, which would
+    // otherwise silently expose restricted folders during the outage.
+    req.user.profileRole = 'viewer';
+  }
   next();
 });
 
