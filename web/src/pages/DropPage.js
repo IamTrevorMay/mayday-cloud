@@ -59,7 +59,9 @@ export default function DropPage() {
   const handleFiles = useCallback(async (files) => {
     const fileList = Array.from(files);
     for (const file of fileList) {
-      const id = Date.now() + '_' + file.name;
+      // Add a random component so two same-name files dropped in the same
+      // millisecond don't produce duplicate React keys.
+      const id = Date.now() + '_' + Math.random().toString(36).slice(2) + '_' + file.name;
       setUploads(prev => [...prev, { id, name: file.name, status: 'uploading' }]);
 
       try {
