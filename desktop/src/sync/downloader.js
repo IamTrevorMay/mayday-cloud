@@ -160,6 +160,12 @@ class DownloadQueue {
     });
   }
 
+  abort() {
+    // Drop pending downloads so a subsequent engine start doesn't run them
+    // concurrently. In-flight fetch streams aren't individually abortable here.
+    this.queue = [];
+  }
+
   get busy() {
     return this.active > 0 || this.queue.length > 0;
   }

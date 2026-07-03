@@ -329,7 +329,7 @@ function close() {
 module.exports = {
   init, upsertFile, markSyncing, markSynced, markError,
   removeFile, getFile, getAllFiles, getFilesByStatus, getCounts,
-  logAction, getRecentLogs, close,
+  logAction, getRecentLogs, close, saveSync,
   updateLocalState, updateRemoteState, markBaseSynced,
   getFilesBySyncFolder, getAllBaseFiles,
 };

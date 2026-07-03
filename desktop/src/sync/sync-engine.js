@@ -74,6 +74,13 @@ class SyncEngine {
       this.downloadQueue.drain(30000),
     ]);
 
+    // Abort anything still in flight after the drain window. Without this,
+    // stop() can resolve with live transfers, and a subsequent engine start
+    // (folder update / resume) would run its uploads concurrently with these,
+    // racing on the same files. abort() is a no-op if everything already drained.
+    this.queue.abort();
+    this.downloadQueue.abort();
+
     logger.info('Sync engine stopped.');
     logger.emit('statusUpdate', { state: 'stopped' });
   }

@@ -332,6 +332,9 @@ ipcMain.handle('sync:status', () => {
 ipcMain.handle('sync:pause', async () => {
   if (syncEngine) {
     await syncEngine.stop();
+    // stop() doesn't flush the DB; without this, a resume re-inits from a
+    // file up to 2s stale and drops the newest state rows.
+    db.saveSync();
     syncEngine.paused = true;
     tray.setState('paused');
   }
