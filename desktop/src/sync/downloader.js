@@ -168,26 +168,43 @@ class DownloadQueue {
 async function _streamToFile(readableStream, filePath) {
   const fileStream = fs.createWriteStream(filePath);
 
+  // Keep an 'error' listener attached for the whole lifetime of the stream.
+  // A write error (ENOSPC/EACCES/IO) can fire asynchronously during the read
+  // loop; without a listener the 'error' event throws and crashes the entire
+  // Electron main process (the tray dies) during a routine download.
+  let writeErr = null;
+  fileStream.on('error', (e) => { writeErr = e; });
+
   // Node 18+ fetch returns a web ReadableStream; pipe via async iteration
   const reader = readableStream.getReader();
   try {
     while (true) {
+      if (writeErr) throw writeErr;
       const { done, value } = await reader.read();
       if (done) break;
       const canContinue = fileStream.write(value);
       if (!canContinue) {
-        await new Promise(r => fileStream.once('drain', r));
+        // Resolve on error too so a failed write doesn't hang here waiting
+        // for a 'drain' that will never come; the next loop check rethrows.
+        await new Promise((resolve) => {
+          fileStream.once('drain', resolve);
+          fileStream.once('error', resolve);
+        });
       }
     }
+    await new Promise((resolve, reject) => {
+      fileStream.end();
+      fileStream.once('finish', resolve);
+      fileStream.once('error', reject);
+    });
+  } catch (err) {
+    // Close the write stream / release its fd so a failed download leaves no
+    // leaked descriptor on the (soon-unlinked) temp file.
+    fileStream.destroy();
+    throw err;
   } finally {
     reader.releaseLock();
   }
-
-  await new Promise((resolve, reject) => {
-    fileStream.end();
-    fileStream.on('finish', resolve);
-    fileStream.on('error', reject);
-  });
 }
 
 module.exports = { DownloadQueue };
