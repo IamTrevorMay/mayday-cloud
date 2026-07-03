@@ -322,17 +322,23 @@ router.get('/thumb', async (req, res) => {
     }
 
     const sharp = require('sharp');
+    // Generate to a unique temp file then atomically rename into place. A
+    // concurrent request either sees no cache file (and generates its own) or
+    // the fully-renamed file — never a half-written one. The unique suffix
+    // also stops two video requests from colliding on a shared temp frame.
+    const uniq = `${process.pid}-${crypto.randomBytes(4).toString('hex')}`;
+    const tmpThumb = `${thumbPath}.tmp-${uniq}`;
 
     if (IMAGE_EXTS.includes(ext)) {
       await sharp(fullPath)
         .resize(200, 200, { fit: 'cover' })
         .jpeg({ quality: 70 })
-        .toFile(thumbPath);
+        .toFile(tmpThumb);
     } else {
       // Video: extract frame with ffmpeg
       const ffmpeg = require('fluent-ffmpeg');
       const os = require('os');
-      const tempPng = path.join(os.tmpdir(), `mck_frame_${cacheKey}.png`);
+      const tempPng = path.join(os.tmpdir(), `mck_frame_${cacheKey}_${uniq}.png`);
 
       await new Promise((resolve, reject) => {
         ffmpeg(fullPath)
@@ -349,10 +355,12 @@ router.get('/thumb', async (req, res) => {
       await sharp(tempPng)
         .resize(200, 200, { fit: 'cover' })
         .jpeg({ quality: 70 })
-        .toFile(thumbPath);
+        .toFile(tmpThumb);
 
       fsp.unlink(tempPng).catch(() => {});
     }
+
+    await fsp.rename(tmpThumb, thumbPath);
 
     res.setHeader('Content-Type', 'image/jpeg');
     res.setHeader('Cache-Control', 'public, max-age=86400');
