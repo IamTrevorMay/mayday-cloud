@@ -10,6 +10,7 @@ const webdav = require('webdav-server').v2;
 const { authMiddleware, verifyToken, requireRole, resolveRole } = require('./middleware/auth');
 const { createWebDAVServer } = require('./webdav/server');
 const { webdavRangeSize } = require('./webdav/range-size');
+const { redactUrl } = require('./middleware/logger');
 const nasRouter = require('./routes/nas');
 const sharesRouter = require('./routes/shares');
 const keysRouter = require('./routes/keys');
@@ -82,7 +83,7 @@ app.use((req, res, next) => {
     const duration = Date.now() - start;
     const log = {
       method: req.method,
-      route: req.originalUrl,
+      route: redactUrl(req.originalUrl),
       status: res.statusCode,
       duration_ms: duration,
       user_id: req.user?.id || null,
