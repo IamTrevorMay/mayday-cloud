@@ -126,32 +126,35 @@ const tusServer = new TusServer({
     return upload;
   },
   async onUploadFinish(req, upload) {
-    // Move completed file from staging to target path
-    try {
-      const metadata = upload.metadata || {};
-      const filename = metadata.filename || upload.id;
-      const targetPath = metadata.targetPath || '';
+    // Move completed file from staging to target path.
+    const metadata = upload.metadata || {};
+    // basename strips any directory components a malicious client put in the
+    // filename metadata, so the move can't escape the target directory.
+    const filename = path.basename(metadata.filename || upload.id);
+    const targetPath = metadata.targetPath || '';
+    // v2: storage.path is the absolute path to the completed file
+    const srcFile = upload.storage?.path || path.join(tusStaging, upload.id);
 
+    try {
       const destDir = path.resolve(ASSETS_ROOT, targetPath || '');
-      if (!destDir.startsWith(ASSETS_ROOT)) {
+      if (destDir !== ASSETS_ROOT && !destDir.startsWith(ASSETS_ROOT + path.sep)) {
+        throw new Error('Path traversal blocked');
+      }
+      const destFile = path.join(destDir, filename);
+      if (!destFile.startsWith(destDir + path.sep)) {
         throw new Error('Path traversal blocked');
       }
 
       fs.mkdirSync(destDir, { recursive: true });
-      const destFile = path.join(destDir, filename);
-      if (!destFile.startsWith(ASSETS_ROOT)) {
-        throw new Error('Path traversal blocked');
-      }
-
-      // v2: storage.path is the absolute path to the completed file
-      const srcFile = upload.storage?.path || path.join(tusStaging, upload.id);
       fs.renameSync(srcFile, destFile);
-
-      // Clean up .info file
-      const infoFile = srcFile + '.info';
-      fs.unlink(infoFile, () => {});
+      fs.unlink(srcFile + '.info', () => {});
     } catch (err) {
+      // Surface the failure to the client instead of returning a false 204,
+      // and remove the staged file so a failed move leaves no orphan.
       console.error('[tus] onUploadFinish error:', err.message);
+      fs.unlink(srcFile, () => {});
+      fs.unlink(srcFile + '.info', () => {});
+      throw err;
     }
     return upload;
   },

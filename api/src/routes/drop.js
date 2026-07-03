@@ -17,7 +17,11 @@ function getSupabase() {
 
 function sanitizePath(requestedPath) {
   const resolved = path.resolve(ASSETS_ROOT, requestedPath || '');
-  if (!resolved.startsWith(ASSETS_ROOT)) throw new Error('Path traversal blocked');
+  // Trailing-separator boundary: a bare prefix check would let a sibling
+  // path like "/Volumes/May Server Backup" escape root "/Volumes/May Server".
+  if (resolved !== ASSETS_ROOT && !resolved.startsWith(ASSETS_ROOT + path.sep)) {
+    throw new Error('Path traversal blocked');
+  }
   return resolved;
 }
 

@@ -70,7 +70,10 @@ const writeGuard = requireRole('admin', 'member');
 
 function sanitizePath(requestedPath, assetsRoot) {
   const resolved = path.resolve(assetsRoot, requestedPath || '');
-  if (!resolved.startsWith(assetsRoot)) {
+  // Boundary must be checked with a trailing separator, otherwise a sibling
+  // path that merely shares the string prefix (e.g. "/Volumes/May Server
+  // Backup" vs root "/Volumes/May Server") passes startsWith and escapes.
+  if (resolved !== assetsRoot && !resolved.startsWith(assetsRoot + path.sep)) {
     throw new Error('Path traversal blocked');
   }
   return resolved;
