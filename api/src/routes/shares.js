@@ -15,6 +15,18 @@ router.post('/', writeGuard, async (req, res) => {
   try {
     const { target_path, mode = 'upload', max_uses = 10, expires_in_hours = 72 } = req.body;
     if (!target_path) return res.status(400).json({ error: 'target_path required' });
+    if (!['upload', 'download', 'both'].includes(mode)) {
+      return res.status(400).json({ error: "mode must be 'upload', 'download', or 'both'" });
+    }
+    // null/undefined max_uses means unlimited; a provided limit must be >= 1.
+    // A stored max_uses of 0 read as falsy downstream ("&& used_count >= ...")
+    // and silently became unlimited.
+    if (max_uses !== null && max_uses !== undefined && (!Number.isInteger(max_uses) || max_uses < 1)) {
+      return res.status(400).json({ error: 'max_uses must be a positive integer, or null for unlimited' });
+    }
+    if (!Number.isFinite(expires_in_hours) || expires_in_hours <= 0) {
+      return res.status(400).json({ error: 'expires_in_hours must be a positive number' });
+    }
 
     const token = crypto.randomBytes(24).toString('base64url');
     const expires_at = new Date(Date.now() + expires_in_hours * 3600000).toISOString();
