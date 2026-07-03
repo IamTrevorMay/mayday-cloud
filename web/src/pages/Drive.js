@@ -270,9 +270,12 @@ export default function Drive() {
   }
 
   function copyShareUrl(url) {
-    navigator.clipboard.writeText(url);
-    setCopiedLink(url);
-    setTimeout(() => setCopiedLink(null), 2000);
+    // Only show "Copied!" if the write actually succeeded, and swallow the
+    // rejection (denied permission / non-secure context) so it isn't unhandled.
+    navigator.clipboard.writeText(url).then(() => {
+      setCopiedLink(url);
+      setTimeout(() => setCopiedLink(null), 2000);
+    }).catch(() => {});
   }
 
   // ─── Access management API ───
@@ -1711,9 +1714,10 @@ function SettingsView({ user, userRole, storageInfo, signOut, apiKeys, apiKeysLo
   }
 
   function copyKey(key) {
-    navigator.clipboard.writeText(key);
-    setCopiedKey(key);
-    setTimeout(() => setCopiedKey(null), 2000);
+    navigator.clipboard.writeText(key).then(() => {
+      setCopiedKey(key);
+      setTimeout(() => setCopiedKey(null), 2000);
+    }).catch(() => {});
   }
 
   return (
