@@ -25,6 +25,9 @@ async function scanRemote(config, syncFolders, remoteFolder) {
     prefix: syncFolders.length > 0 ? syncFolders[i] : '',
   }));
 
+  // Guard against server-side directory cycles (symlink loops) that would
+  // otherwise grow dirQueue without bound and hang / OOM the scan.
+  const visited = new Set();
   let idx = 0;
   let active = 0;
   let resolve;
@@ -43,6 +46,8 @@ async function scanRemote(config, syncFolders, remoteFolder) {
 
   async function processDir(item) {
     try {
+      if (visited.has(item.remotePath)) return;
+      visited.add(item.remotePath);
       const listing = await api.listRemote(config, item.remotePath);
       const items = listing.items || listing;
 
