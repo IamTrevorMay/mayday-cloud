@@ -51,34 +51,49 @@ export function AuthProvider({ children }) {
 
   async function signUp(email, password, displayName) {
     const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:4000';
-    const res = await fetch(`${API_URL}/api/auth/signup`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password, displayName }),
-    });
-    const body = await res.json();
-    if (!res.ok) return { error: { message: body.error } };
-    // Set the session from the server response
-    await supabase.auth.setSession(body.session);
-    return { error: null };
+    try {
+      const res = await fetch(`${API_URL}/api/auth/signup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password, displayName }),
+      });
+      // res.json() throws on a non-JSON error page (e.g. a Cloudflare 502
+      // HTML body); catch so the caller always gets a result and clears its
+      // loading state instead of hanging on an unhandled rejection.
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) return { error: { message: body.error || 'Sign-up failed' } };
+      await supabase.auth.setSession(body.session);
+      return { error: null };
+    } catch {
+      return { error: { message: 'Network error — please try again' } };
+    }
   }
 
   async function signInWithStudio(email, password) {
     const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:4000';
-    const res = await fetch(`${API_URL}/api/auth/studio`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
-    });
-    const body = await res.json();
-    if (!res.ok) return { error: { message: body.error } };
-    await supabase.auth.setSession(body.session);
-    return { error: null };
+    try {
+      const res = await fetch(`${API_URL}/api/auth/studio`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) return { error: { message: body.error || 'Sign-in failed' } };
+      await supabase.auth.setSession(body.session);
+      return { error: null };
+    } catch {
+      return { error: { message: 'Network error — please try again' } };
+    }
   }
 
   async function signOut() {
-    await supabase.auth.signOut();
-    setSession(null);
+    // Always clear local session even if the network sign-out rejects, so the
+    // UI never gets stuck in a logged-in state on a failed request.
+    try {
+      await supabase.auth.signOut();
+    } finally {
+      setSession(null);
+    }
   }
 
   const value = {
