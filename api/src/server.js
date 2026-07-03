@@ -117,11 +117,35 @@ const tusServer = new TusServer({
       throw { status_code: 401, body: 'Missing authorization' };
     }
     const token = header.slice(7);
+    let user;
     try {
-      await verifyToken(token);
+      user = await verifyToken(token);
     } catch (err) {
       console.error('[tus] onUploadCreate: verifyToken failed:', err.message, '| token prefix:', token.slice(0, 20));
       throw { status_code: 401, body: 'Invalid token' };
+    }
+
+    // The multer /upload route is gated by requireRole('admin','member');
+    // the TUS path (large files, rate-limiter exempt) needs the same gate,
+    // otherwise a viewer or a scoped API key can write freely.
+    let role;
+    try {
+      role = await resolveRole(user.id);
+    } catch (err) {
+      throw { status_code: 500, body: 'Role check failed' };
+    }
+    if (role !== 'admin' && role !== 'member') {
+      throw { status_code: 403, body: 'Insufficient permissions' };
+    }
+
+    // Enforce API-key path scoping on the upload target.
+    if (user.scopedPath) {
+      const targetPath = (upload.metadata && upload.metadata.targetPath) || '';
+      const scope = user.scopedPath.replace(/^\/+|\/+$/g, '');
+      const rel = targetPath.replace(/^\/+|\/+$/g, '');
+      if (scope && rel !== scope && !rel.startsWith(scope + '/')) {
+        throw { status_code: 403, body: 'Path outside key scope' };
+      }
     }
     return upload;
   },
