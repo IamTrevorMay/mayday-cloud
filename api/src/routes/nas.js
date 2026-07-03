@@ -470,18 +470,29 @@ router.delete('/delete', writeGuard, async (req, res) => {
 router.get('/search', async (req, res) => {
   try {
     const query = req.query.q;
-    if (!query) return res.status(400).json({ error: 'q required' });
+    // Require a minimum query length and bound the walk: a single "?q=a" would
+    // otherwise stat the entire tree and stream the whole NAS listing back,
+    // making it a cheap DoS / full-tree info dump under the 600/min limiter.
+    if (!query || query.trim().length < 2) {
+      return res.status(400).json({ error: 'q must be at least 2 characters' });
+    }
     const dataset = req.query.dataset || '';
     const searchRoot = resolvePath(req, dataset);
     const lowerQuery = query.toLowerCase();
 
+    const MAX_RESULTS = 500;
+    const MAX_ENTRIES = 50000;
+    let visited = 0;
+    const results = [];
+
     async function walk(dir, depth = 0) {
-      if (depth > 10) return []; // safety limit
-      let results = [];
+      if (depth > 10 || results.length >= MAX_RESULTS || visited >= MAX_ENTRIES) return;
       let entries;
-      try { entries = await fsp.readdir(dir, { withFileTypes: true }); } catch { return results; }
+      try { entries = await fsp.readdir(dir, { withFileTypes: true }); } catch { return; }
       for (const entry of entries) {
+        if (results.length >= MAX_RESULTS || visited >= MAX_ENTRIES) return;
         if (HIDDEN_DIRS.has(entry.name)) continue;
+        visited++;
         try {
           const entryPath = path.join(dir, entry.name);
           const isDir = entry.isDirectory();
@@ -496,18 +507,18 @@ router.get('/search', async (req, res) => {
               extension: isDir ? null : path.extname(entry.name).toLowerCase().slice(1) || null,
             });
           }
-          if (isDir) results = results.concat(await walk(entryPath, depth + 1));
+          if (isDir) await walk(entryPath, depth + 1);
         } catch { continue; }
       }
-      return results;
     }
 
-    let results = await walk(searchRoot);
+    await walk(searchRoot);
+    const truncated = results.length >= MAX_RESULTS || visited >= MAX_ENTRIES;
     const restrictions = await getRestrictions();
     const role = req.user?.profileRole;
     const userId = req.user?.id;
-    results = results.filter(item => !isPathRestricted(item.path, role, userId, restrictions));
-    res.json({ query, results });
+    const filtered = results.filter(item => !isPathRestricted(item.path, role, userId, restrictions));
+    res.json({ query, results: filtered, truncated });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
