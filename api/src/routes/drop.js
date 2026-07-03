@@ -3,6 +3,7 @@ const router = express.Router();
 const path = require('path');
 const fs = require('fs');
 const fsp = fs.promises;
+const crypto = require('crypto');
 const multer = require('multer');
 const { createClient } = require('@supabase/supabase-js');
 
@@ -113,7 +114,12 @@ router.post('/:token/upload', upload.single('file'), async (req, res) => {
     }
 
     await fsp.mkdir(destDir, { recursive: true });
-    await fsp.writeFile(destPath, req.file.buffer);
+    // Write to a unique temp file first, then reserve the usage slot, then
+    // rename into place. A losing concurrent upload removes only its own temp
+    // file — the previous code wrote to destPath before incrementing, so the
+    // increment loser's unlink(destPath) deleted the winner's just-written file.
+    const tmpPath = destPath + '.uploading-' + crypto.randomBytes(6).toString('hex');
+    await fsp.writeFile(tmpPath, req.file.buffer);
 
     // Atomically increment used_count (optimistic lock prevents race condition)
     const { data: updated, error: updateErr } = await sb
@@ -124,11 +130,13 @@ router.post('/:token/upload', upload.single('file'), async (req, res) => {
       .select('id');
 
     if (updateErr || !updated || updated.length === 0) {
-      // Another request incremented first — remove the written file and reject
-      await fsp.unlink(destPath).catch(() => {});
+      // Another request incremented first — remove our temp file and reject
+      await fsp.unlink(tmpPath).catch(() => {});
       return res.status(410).json({ error: 'Link usage limit reached' });
     }
 
+    // Usage slot reserved — atomically move the temp file into place.
+    await fsp.rename(tmpPath, destPath);
     res.json({ success: true, name: safeName });
   } catch (err) {
     res.status(400).json({ error: err.message });
