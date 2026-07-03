@@ -544,14 +544,20 @@ router.post('/trash/restore', writeGuard, async (req, res) => {
     const { trashName } = req.body;
     if (!trashName) return res.status(400).json({ error: 'trashName required' });
 
+    // basename prevents a crafted trashName (e.g. "../secret") from escaping
+    // the .trash directory.
+    const safeTrashName = path.basename(trashName);
     const trashDir = path.join(ASSETS_ROOT, '.trash');
-    const trashPath = path.join(trashDir, trashName);
-    if (!trashPath.startsWith(trashDir)) return res.status(400).json({ error: 'Path traversal blocked' });
+    const trashPath = path.join(trashDir, safeTrashName);
+    if (!trashPath.startsWith(trashDir + path.sep)) return res.status(400).json({ error: 'Path traversal blocked' });
 
-    // Parse original name
-    const underscoreIdx = trashName.indexOf('_');
-    const originalName = underscoreIdx > 0 ? trashName.slice(underscoreIdx + 1) : trashName;
+    // Parse original name (also basenamed so it can't restore outside root)
+    const underscoreIdx = safeTrashName.indexOf('_');
+    const originalName = path.basename(underscoreIdx > 0 ? safeTrashName.slice(underscoreIdx + 1) : safeTrashName);
     let destPath = path.join(ASSETS_ROOT, originalName);
+    if (destPath !== ASSETS_ROOT && !destPath.startsWith(ASSETS_ROOT + path.sep)) {
+      return res.status(400).json({ error: 'Path traversal blocked' });
+    }
 
     // Collision handling: append (1), (2), etc.
     if (await fsp.access(destPath).then(() => true).catch(() => false)) {
@@ -577,9 +583,10 @@ router.delete('/trash/delete', writeGuard, async (req, res) => {
     const { trashName } = req.body;
     if (!trashName) return res.status(400).json({ error: 'trashName required' });
 
+    const safeTrashName = path.basename(trashName);
     const trashDir = path.join(ASSETS_ROOT, '.trash');
-    const trashPath = path.join(trashDir, trashName);
-    if (!trashPath.startsWith(trashDir)) return res.status(400).json({ error: 'Path traversal blocked' });
+    const trashPath = path.join(trashDir, safeTrashName);
+    if (!trashPath.startsWith(trashDir + path.sep)) return res.status(400).json({ error: 'Path traversal blocked' });
 
     const stat = await fsp.stat(trashPath);
     if (stat.isDirectory()) {
