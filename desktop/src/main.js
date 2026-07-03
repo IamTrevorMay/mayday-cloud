@@ -107,13 +107,13 @@ function createMenubar() {
     }
   });
 
-  mb.on('after-create-window', () => {
-    // Forward sync status updates to renderer
-    logger.on('statusUpdate', (status) => {
-      if (mb.window && !mb.window.isDestroyed()) {
-        mb.window.webContents.send('sync:statusUpdate', status);
-      }
-    });
+  // Forward sync status updates to renderer. Register once — after-create-window
+  // fires on every window (re)creation, which would stack duplicate listeners;
+  // the guard handles the window not existing yet.
+  logger.on('statusUpdate', (status) => {
+    if (mb.window && !mb.window.isDestroyed()) {
+      mb.window.webContents.send('sync:statusUpdate', status);
+    }
   });
 }
 
