@@ -28,6 +28,12 @@ class UploadQueue {
     this._tick();
   }
 
+  // True if an upload for this path is queued or actively transferring.
+  has(relPath) {
+    if (this.activeUploads.has(relPath)) return true;
+    return this.queue.some((job) => job.relPath === relPath && !job.isDelete);
+  }
+
   _tick() {
     while (this.active < MAX_CONCURRENCY && this.queue.length > 0) {
       const job = this.queue.shift();

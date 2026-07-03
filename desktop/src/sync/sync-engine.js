@@ -269,9 +269,30 @@ class SyncEngine {
       if (!inScope) return;
     }
 
+    let stat;
     try {
-      const stat = fs.statSync(fullPath);
+      stat = fs.statSync(fullPath);
+    } catch (err) {
+      // File vanished between the watcher event and now — skip quietly.
+      if (err.code === 'ENOENT') return;
+      logger.error(`Error stating file ${relPath}: ${err.message}`);
+      return;
+    }
 
+    // Skip if already queued or actively uploading (repeated add/change events
+    // would otherwise enqueue duplicate uploads of the same file).
+    if (this.queue.has(relPath)) return;
+
+    // Skip if already synced and unchanged. Guards against the watcher firing
+    // an 'add' for a just-downloaded file after the downloadingPaths window,
+    // which would re-upload it in a download->upload echo.
+    const existing = db.getFile(relPath);
+    if (existing && existing.status === 'synced' &&
+        existing.size === stat.size && existing.mtime_ms === stat.mtimeMs) {
+      return;
+    }
+
+    try {
       const dir = path.dirname(relPath);
       if (dir && dir !== '.') {
         const remoteDir = path.posix.join(this.remoteFolder, dir);
