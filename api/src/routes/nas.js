@@ -77,7 +77,11 @@ function isPathRestricted(itemPath, role, userId, restrictions) {
 const writeGuard = requireRole('admin', 'member');
 
 function sanitizePath(requestedPath, assetsRoot) {
-  const resolved = path.resolve(assetsRoot, requestedPath || '');
+  // Paths are root-relative: "/PitchVideos/x.mp4" means ASSETS_ROOT/PitchVideos/x.mp4.
+  // Strip leading slashes so path.resolve can't treat the input as fs-absolute
+  // (which would resolve outside assetsRoot and read as traversal).
+  const rel = String(requestedPath || '').replace(/^\/+/, '');
+  const resolved = path.resolve(assetsRoot, rel);
   // Boundary must be checked with a trailing separator, otherwise a sibling
   // path that merely shares the string prefix (e.g. "/Volumes/May Server
   // Backup" vs root "/Volumes/May Server") passes startsWith and escapes.
